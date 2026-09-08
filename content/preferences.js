@@ -6,7 +6,7 @@ var ZoteroOneDriveOrganizerPrefs = {
     if (this._initialized) return;
     this._initialized = true;
 
-    this._bindCheckbox("zoo-auto-enabled", "autoEnabled", true);
+    this._bindCheckbox("zoo-auto-enabled", "autoEnabled", false);
     this._bindText("zoo-base-dir", "baseDir", "");
     this._bindCheckbox("zoo-library-folder", "includeLibraryFolder", true);
     this._bindCheckbox("zoo-collection-path", "includeCollectionPath", true);
@@ -67,10 +67,102 @@ var ZoteroOneDriveOrganizerPrefs = {
     }
   },
 
+  async validateFolder() {
+    try {
+      const path = await this.organizer.validateBaseDirectory();
+      this._setStatus(`Folder OK — ${path}`);
+      this._alert("OneDrive Organizer", `Folder is accessible:\n${path}`);
+    }
+    catch (e) {
+      Zotero.logError(e);
+      this._setStatus("Folder check failed");
+      this._alert("OneDrive Organizer", `Folder check failed:\n${e}`);
+    }
+  },
+
+  async organizeSelected() {
+    const button = document.getElementById("zoo-organize-selected");
+    button.disabled = true;
+    try {
+      await this.organizer.validateBaseDirectory();
+      const pane = Zotero.getActiveZoteroPane();
+      const selected = pane?.getSelectedItems?.() || [];
+      if (!selected.length) {
+        this._alert("OneDrive Organizer", "Select one or more items or PDF attachments in the Zotero library pane first.");
+        return;
+      }
+
+      const attachmentIDs = [];
+      const seen = new Set();
+      for (const item of selected) {
+        let ids = [];
+        if (item.isAttachment?.()) {
+          ids = [item.id];
+        }
+        else if (item.isRegularItem?.()) {
+          ids = item.getAttachments?.() || [];
+        }
+        for (const id of ids) {
+          if (!seen.has(id)) {
+            seen.add(id);
+            attachmentIDs.push(id);
+          }
+        }
+      }
+
+      if (!attachmentIDs.length) {
+        this._alert("OneDrive Organizer", "The selected Zotero item(s) contain no attachments to process.");
+        return;
+      }
+
+      const stats = { processed: 0, skipped: 0, failed: 0, failures: [] };
+      for (let i = 0; i < attachmentIDs.length; i++) {
+        try {
+          const result = await this.organizer.processAttachment(attachmentIDs[i], { quietSkip: true });
+          if (result.status === "processed") stats.processed++;
+          else stats.skipped++;
+        }
+        catch (e) {
+          stats.failed++;
+          stats.failures.push(String(e));
+          Zotero.logError(e);
+        }
+        this._setStatus(`${i + 1}/${attachmentIDs.length} — moved ${stats.processed}, skipped ${stats.skipped}, failed ${stats.failed}`);
+      }
+
+      const detail = stats.failures.length ? `\n\nFirst error: ${stats.failures[0]}` : "";
+      this._alert(
+        "OneDrive Organizer",
+        `Selected-item test finished.\n\nProcessed: ${stats.processed}\nSkipped: ${stats.skipped}\nFailed: ${stats.failed}${detail}`
+      );
+    }
+    catch (e) {
+      Zotero.logError(e);
+      this._alert("OneDrive Organizer", `Could not process selected items:\n${e}`);
+      this._setStatus("Error");
+    }
+    finally {
+      button.disabled = false;
+    }
+  },
+
   async organizeExisting() {
     const button = document.getElementById("zoo-organize-existing");
     button.disabled = true;
     try {
+      await this.organizer.validateBaseDirectory();
+      const eligible = await this.organizer.countEligible();
+      if (!eligible) {
+        this._alert("OneDrive Organizer", "No eligible stored PDFs were found in My Library.");
+        return;
+      }
+      const confirmed = Services.prompt.confirm(
+        window,
+        "OneDrive Organizer — bulk migration",
+        `This will attempt to reorganize ${eligible} stored PDF(s) across My Library.\n\nContinue only after a successful selected-item test and a backup.`
+      );
+      if (!confirmed) return;
+
       this._setStatus("Scanning…");
       const stats = await this.organizer.organizeExisting({
         progress: ({ current, total, stats }) => {

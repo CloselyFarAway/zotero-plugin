@@ -17,6 +17,8 @@ INCLUDE = [
     "content/preferences.xhtml",
     "content/preferences.js",
     "README.md",
+    "TESTING.md",
+    "CHANGELOG.md",
     "LICENSE",
 ]
 

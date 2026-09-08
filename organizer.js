@@ -1,6 +1,6 @@
 /*
  * Zotero OneDrive Organizer
- * v0.1.0
+ * v0.1.1
  *
  * Safety model:
  *   1. Copy the stored PDF to the external folder.

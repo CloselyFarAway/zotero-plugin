@@ -8,7 +8,7 @@
     </description>
 
     <checkbox id="zoo-auto-enabled"
-              label="Automatically organize newly added stored PDFs" />
+              label="Automatically organize newly added stored PDFs (off by default for safety)" />
 
     <separator class="thin" />
 
@@ -16,6 +16,7 @@
     <hbox align="center">
       <html:input id="zoo-base-dir" type="text" style="min-width: 36em; flex: 1;" />
       <button id="zoo-browse" label="Browse…" oncommand="ZoteroOneDriveOrganizerPrefs.chooseBaseDir()" />
+      <button id="zoo-check-folder" label="Check folder" oncommand="ZoteroOneDriveOrganizerPrefs.validateFolder()" />
     </hbox>
 
     <separator class="thin" />
@@ -46,8 +47,11 @@
     <separator />
 
     <hbox align="center">
+      <button id="zoo-organize-selected"
+              label="Organize selected item(s)"
+              oncommand="ZoteroOneDriveOrganizerPrefs.organizeSelected()" />
       <button id="zoo-organize-existing"
-              label="Organize existing PDFs now"
+              label="Organize ALL existing PDFs…"
               oncommand="ZoteroOneDriveOrganizerPrefs.organizeExisting()" />
       <label id="zoo-status" value="" style="margin-left: 1em;" />
     </hbox>

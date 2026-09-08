@@ -1,13 +1,15 @@
 {
   "manifest_version": 2,
   "name": "Zotero OneDrive Organizer",
-  "version": "0.1.0",
-  "description": "Moves stored PDF attachments from My Library into a OneDrive/external folder organized by Zotero collection, then converts them to linked files.",
+  "version": "0.1.1",
+  "description": "Moves stored PDF attachments from My Library into a OneDrive/external folder organized by Zotero collection, then replaces them with linked-file attachments.",
   "applications": {
     "zotero": {
-      "id": "onedrive-organizer@zotero.local",
+      "id": "zotero-onedrive-organizer@closelyfaraway.github.io",
       "strict_min_version": "10.0",
       "strict_max_version": "10.0.*"
     }
-  }
+  },
+  "author": "CloselyFarAway",
+  "homepage_url": "https://github.com/CloselyFarAway/zotero-plugin"
 }

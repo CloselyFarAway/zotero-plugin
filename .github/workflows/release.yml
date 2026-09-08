@@ -16,6 +16,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
+      - name: Verify tag matches manifest version
+        run: >-
+          python -c 'import json, os; v=json.load(open("manifest.json", encoding="utf-8"))["version"]; assert os.environ["GITHUB_REF_NAME"] == "v" + v, "tag %s != manifest v%s" % (os.environ["GITHUB_REF_NAME"], v)'
       - name: Build XPI
         run: python scripts/build.py
       - name: Publish GitHub release

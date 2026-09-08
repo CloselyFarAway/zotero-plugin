@@ -1,4 +1,4 @@
-pref("extensions.zotero-onedrive-organizer.autoEnabled", true);
+pref("extensions.zotero-onedrive-organizer.autoEnabled", false);
 pref("extensions.zotero-onedrive-organizer.baseDir", "");
 pref("extensions.zotero-onedrive-organizer.includeLibraryFolder", true);
 pref("extensions.zotero-onedrive-organizer.includeCollectionPath", true);
