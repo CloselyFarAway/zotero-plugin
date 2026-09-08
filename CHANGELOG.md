@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.4 - 2026-09-08
+
+- Add **Preview selected path(s)…** so users can inspect planned destinations without moving files.
+- Make **Check folder** verify actual write/delete permission with a temporary test file.
+- Make automatic-processing fallback explicitly **off** if the preference cannot be read.
+- Add current plugin version, project-page link, and issue-report link to Settings.
+- Rewrite the public README with download, quick-start, FAQ, privacy, troubleshooting, roadmap, and uninstall behavior.
+- Add Korean documentation (`README.ko.md`) and clearer first-run guidance.
+- Add `CONTRIBUTING.md`, bug/feature issue forms, and a pull-request safety checklist.
+- Make XPI builds reproducible and generate SHA-256 checksum files.
+- Add `scripts/check.py` and update GitHub Actions to validate manifests, update metadata, package structure, and JavaScript syntax.
+- Update `updates.json` to publish a SHA-256-verified v0.1.4 update.
+
 ## 0.1.3
 
 - Fix Zotero 10 preference-pane initialization.

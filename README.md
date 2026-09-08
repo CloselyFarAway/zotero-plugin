@@ -1,34 +1,40 @@
 # Zotero OneDrive Organizer
 
-A small Zotero 10 plugin that moves **stored PDF attachments** from **My Library** to a local OneDrive (or other externally synced) folder and replaces the stored attachment with a **linked-file attachment** that points to the external copy.
+[![Zotero](https://img.shields.io/badge/Zotero-10.0.x-CC2936)](https://www.zotero.org/)
+[![Release](https://img.shields.io/github/v/release/CloselyFarAway/zotero-plugin?display_name=tag)](https://github.com/CloselyFarAway/zotero-plugin/releases/latest)
+[![Build](https://github.com/CloselyFarAway/zotero-plugin/actions/workflows/build.yml/badge.svg)](https://github.com/CloselyFarAway/zotero-plugin/actions/workflows/build.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> Status: **v0.1.1 / experimental**. Back up your Zotero data and PDFs before bulk migration.
+**English** | [한국어](README.ko.md)
 
-## Why
+A Zotero 10 plugin that moves **stored PDF attachments** from **My Library** to OneDrive (or any normal local/synced folder), mirrors your Zotero collection hierarchy, and keeps the PDFs in Zotero as **linked-file attachments**.
 
-Zotero metadata syncing and file syncing are separate. Linked files let Zotero keep the bibliographic database while the actual PDFs live in OneDrive, Dropbox, a NAS, or another local/synced folder.
+> Current version: **v0.1.4**. The core stored-PDF → linked-file workflow was confirmed with v0.1.3 on Zotero 10.0.4 / Windows; v0.1.4 adds incremental safety and usability improvements. Back up important Zotero data before a large first-time migration.
 
-## Requirements
+## Download
 
-- Zotero **10.0.x**
-- A locally accessible OneDrive/external folder
-- **My Library** only for linked PDFs
+Download the latest `.xpi` from **[GitHub Releases](https://github.com/CloselyFarAway/zotero-plugin/releases/latest)**.
 
-Zotero itself does not support linked-file attachments in Group Libraries, so this plugin deliberately skips them.
+Zotero installation: **Tools → Plugins → gear/menu → Install Plugin From File…**, then select the `.xpi` file.
 
-## What v0.1.1 does
+## Why this exists
 
-- Watches for newly added/modified **stored PDFs**
-- Copies each PDF to your configured external root
-- Verifies the destination file size before changing Zotero
-- Creates a linked attachment clone, transfers Zotero annotations/relations/full-text state, then removes the old stored attachment
-- Erases the old stored attachment only as the final database operation, allowing Zotero to clean up its managed storage normally
-- Can organize only the currently selected Zotero item(s) for safe testing
-- Can bulk-organize existing stored PDFs after an explicit confirmation
-- Mirrors Zotero collection/subcollection hierarchy
-- Handles items in multiple collections by choosing the **deepest collection path**; alphabetical path breaks ties
-- Generates safe Windows filenames and resolves filename collisions with ` (2)`, ` (3)`, ...
-- Optionally uses Zotero's relative linked-file paths for multi-computer setups
+Zotero's metadata sync and file storage are separate. If PDF storage quota is the problem, linked files let Zotero keep the bibliographic database while the physical PDFs live in OneDrive, Dropbox, a NAS, an external SSD, or another local/synced folder.
+
+This plugin automates the tedious part: moving PDFs out of Zotero-managed storage and reconnecting them safely as linked files.
+
+## Quick start
+
+1. Install the `.xpi` and restart Zotero if requested.
+2. Open **Settings → OneDrive Organizer**.
+3. Click **Browse…** and choose a dedicated folder such as `D:\OneDrive\Zotero_PDF`.
+4. Click **Check folder**. v0.1.4 verifies both access **and write permission**.
+5. Keep automatic organization **off** for the first test.
+6. Select one test paper in Zotero and click **Preview selected path(s)…**. Nothing is moved during preview.
+7. If the destination looks correct, click **Organize selected item(s)**.
+8. Confirm the PDF still opens normally in Zotero and exists in the expected OneDrive folder.
+9. Only after that, enable automatic organization or use **Organize ALL existing PDFs…**.
+
 
 ## Example
 
@@ -42,13 +48,13 @@ My Library
          └─ Full Text PDF
 ```
 
-External root configured as:
+Configured root:
 
 ```text
 D:\OneDrive\Zotero_PDF
 ```
 
-Result:
+Default result:
 
 ```text
 D:\OneDrive\Zotero_PDF\
@@ -58,44 +64,31 @@ D:\OneDrive\Zotero_PDF\
          └─ Yeo_2026_Diffusion–Model–Driven Discovery.pdf
 ```
 
-## Install
+## Main features
 
-1. Download `zotero-onedrive-organizer-0.1.1.xpi` from the release/artifact.
-2. In Zotero: **Tools → Plugins**.
-3. Use the gear/menu → **Install Plugin From File…** (or drag the `.xpi` into the Plugins window).
-4. Open **Settings → OneDrive Organizer**.
-5. Choose your local OneDrive folder, for example `D:\OneDrive\Zotero_PDF`.
-6. Test with one newly added PDF before using **Organize existing PDFs now**.
+- Zotero **10.0.x** support
+- OneDrive or any normal local/synced filesystem folder
+- Automatic organization of newly added stored PDFs (opt-in)
+- Safe organization of only the currently selected item(s)
+- **Destination preview** before moving anything
+- Bulk migration with an explicit eligible-file count and confirmation
+- Zotero collection/subcollection hierarchy mirroring
+- Optional publication-year folder
+- Custom filename template
+- Windows-safe filenames and collision handling (` (2)`, ` (3)`, …)
+- Optional Zotero relative linked-file paths for multi-computer setups
+- Folder check that verifies the destination is writable
+- Group Library protection: unsupported linked-file attachments are skipped
 
-## First test (recommended)
+## Filename template
 
-1. Back up Zotero before testing an experimental build.
-2. Install the XPI and open **Settings → OneDrive Organizer**.
-3. Choose a new empty test folder inside OneDrive.
-4. Click **Check folder** and confirm Zotero can access it.
-5. Leave automatic organization **off** initially.
-6. Add one test article with one PDF to a test collection.
-7. Select only that test article (or its PDF) in Zotero and click **Organize selected item(s)**.
-8. Confirm the PDF opens from Zotero and exists under the expected OneDrive collection path.
-9. Only then enable automatic organization or consider **Organize ALL existing PDFs…**.
-
-> Do not run a bulk migration on an irreplaceable library until the single-PDF test succeeds.
-
-## Settings
-
-Default folder rule:
+Default:
 
 ```text
-{baseDir}/{library}/{collection/subcollection}/
+{firstCreator}_{year}_{title}
 ```
 
-Default filename rule:
-
-```text
-{firstCreator}_{year}_{title}.pdf
-```
-
-Available filename tokens:
+Available tokens:
 
 - `{firstCreator}`
 - `{year}`
@@ -103,24 +96,20 @@ Available filename tokens:
 - `{itemKey}`
 - `{attachmentKey}`
 
-Optional year folder can produce:
-
-```text
-{baseDir}/{library}/{collectionPath}/{year}/{filename}
-```
+The `.pdf` extension is added automatically.
 
 ## Multiple collections
 
-A Zotero item can appear in several collections without being duplicated. A physical PDF cannot naturally mirror that without duplication, so v0.1.1 stores only one copy:
+A Zotero item can belong to several collections without being duplicated. To avoid duplicating the physical PDF, the plugin stores one copy only:
 
-1. Prefer the deepest collection path.
-2. If several paths have equal depth, choose the alphabetically first full path.
+1. The deepest collection path wins.
+2. If several paths have equal depth, the alphabetically first full path wins.
 
-The Zotero item remains visible in all of its Zotero collections.
+The Zotero item itself remains visible in all of its collections.
 
 ## Safety model
 
-For every PDF the plugin performs:
+For each eligible PDF:
 
 ```text
 stored Zotero PDF
@@ -129,64 +118,105 @@ copy to external folder
       ↓
 verify copied byte size
       ↓
-create linked attachment clone
+create linked attachment
       ↓
 transfer annotations / relations / full-text index
       ↓
-erase old stored attachment as final DB operation
+erase old stored attachment as the final database operation
 ```
 
-If copying or Zotero DB conversion fails, the old stored attachment is retained and the new external copy is removed.
+If copying or Zotero database conversion fails, the original stored attachment is retained and the newly copied external file is removed when possible.
 
-The attachment record is replaced with a linked attachment, so its attachment key/ID changes. The plugin transfers child annotations, relations, full-text index state, and Zotero note links to the new attachment. After syncing Zotero, the deleted stored attachment is no longer a Zotero-file-storage attachment.
+Automatic organization is **off by default**. In v0.1.4, even the internal fallback is fail-safe/off if the preference cannot be read.
 
 ## Important limitations
 
-- **Group Libraries:** unsupported. Zotero itself prohibits linked file attachments in group libraries.
-- **Mobile:** Zotero's linked-file workflow has platform limitations; this plugin does not upload PDFs to Zotero file storage.
-- **Collection moves after organization:** v0.1.1 does **not** automatically relocate an already-linked PDF when you later move the parent item to another collection. This is a good candidate for v0.2 because automatic mass relocation needs careful safeguards.
-- **Only PDFs:** EPUBs, snapshots, images, and other attachments are skipped.
-- After a bulk conversion, run Zotero sync so remote metadata/storage deletion state is propagated. Linked PDFs themselves are not uploaded by Zotero file sync.
-- OneDrive must present the destination as a normal local filesystem path. The plugin does not call the Microsoft Graph API.
-- Do **not** put the Zotero data directory or `zotero.sqlite` itself inside OneDrive. Only use OneDrive for linked attachment files.
+- **My Library only:** Zotero does not support linked-file attachments in Group Libraries, so Group Library attachments are skipped.
+- **Desktop workflow:** linked PDFs are not uploaded by Zotero file sync, so Zotero mobile/web cannot rely on Zotero Storage to retrieve these files.
+- **PDFs only:** EPUBs, snapshots, images, and other attachment types are currently skipped.
+- **Collection moves after organization:** moving an already-organized item to another Zotero collection does not yet relocate its existing linked PDF automatically.
+- **Local filesystem required:** OneDrive must be available as a normal local path. The plugin does not use Microsoft Graph.
+- **Do not put `zotero.sqlite` in OneDrive.** Only use the external folder for linked attachment files.
 
-## Relative paths across computers
+## Multiple computers
 
-If `Use Zotero relative linked-file paths when safe` is enabled, the plugin will use the configured external root as Zotero's linked attachment base directory **only when no conflicting base directory is already configured**.
-
-This lets two PCs use different absolute locations, for example:
+Enable **Use Zotero relative linked-file paths when safe** if the same synced folder is mounted at different absolute paths on different computers, for example:
 
 ```text
 PC 1: D:\OneDrive\Zotero_PDF
 PC 2: C:\Users\name\OneDrive\Zotero_PDF
 ```
 
-while Zotero stores paths relative to the configured base directory on each computer.
+The plugin will only set Zotero's linked-attachment base directory when doing so will not overwrite a conflicting existing base directory.
 
-## Build
+## What happens if I uninstall the plugin?
+
+Already-converted attachments remain normal Zotero linked-file attachments. Uninstalling the plugin stops future automatic organization; it does not move the linked PDFs back into Zotero Storage.
+
+## Privacy and network behavior
+
+- No telemetry or analytics.
+- No Microsoft Graph or OneDrive API access.
+- PDF movement is performed through the local filesystem.
+- Zotero may fetch this repository's `updates.json` to check for plugin updates.
+
+This project is not affiliated with Zotero, the Corporation for Digital Scholarship, or Microsoft.
+
+## Troubleshooting
+
+**Browse works but organization fails**  
+Run **Check folder** first. v0.1.4 creates and deletes a tiny temporary file to verify actual write access.
+
+**Nothing happens to a selected attachment**  
+The plugin only processes stored PDF attachments in My Library. Already-linked files, non-PDFs, and Group Library attachments are skipped.
+
+**I want to see what will happen before moving files**  
+Use **Preview selected path(s)…**. It calculates the planned paths without modifying Zotero or the filesystem.
+
+**I found a bug**  
+Use the **Report a bug / request a feature** button in the plugin settings or open a GitHub issue. Include your Zotero version, plugin version, operating system, and reproduction steps.
+
+## Development
 
 No Node/npm build is required.
 
 ```bash
 python scripts/build.py
+python scripts/check.py
 ```
 
 Output:
 
 ```text
-dist/zotero-onedrive-organizer-0.1.1.xpi
+dist/zotero-onedrive-organizer-0.1.4.xpi
+dist/zotero-onedrive-organizer-0.1.4.xpi.sha256
 ```
 
-## GitHub publishing
+The public extension ID is permanent:
 
-The public plugin ID is fixed as:
-
-```json
-"id": "zotero-onedrive-organizer@closelyfaraway.github.io"
+```text
+zotero-onedrive-organizer@closelyfaraway.github.io
 ```
 
-Do not change this ID after distributing releases; Zotero would treat a different ID as a separate plugin. The manifest homepage points to this repository. An `update_url` can be added later when an automatic-update manifest is published.
+Do not change it after public distribution.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [TESTING.md](TESTING.md) for development and manual test guidance.
+
+## Roadmap
+
+- [x] Zotero 10 support
+- [x] OneDrive / external folder support
+- [x] Collection hierarchy mirroring
+- [x] Safe stored → linked conversion
+- [x] Selected-item migration
+- [x] Destination preview
+- [x] Writable-folder validation
+- [ ] Relocate existing linked files when collection paths change
+- [ ] Restore linked PDFs back into Zotero-managed storage
+- [ ] Support additional attachment types
+- [ ] More filename-template fields
+- [ ] Broader Windows/macOS/Linux testing
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

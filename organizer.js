@@ -1,6 +1,6 @@
 /*
  * Zotero OneDrive Organizer
- * v0.1.3
+ * v0.1.4
  *
  * Safety model:
  *   1. Copy the stored PDF to the external folder.
@@ -66,7 +66,7 @@ var ZoteroOneDriveOrganizer = {
 
   _onNotify(event, type, ids) {
     if (this._shuttingDown || type !== "item") return;
-    if (!this.getPref("autoEnabled", true)) return;
+    if (!this.getPref("autoEnabled", false)) return;
     if (event !== "add" && event !== "modify") return;
 
     for (const id of ids) {
@@ -93,7 +93,7 @@ var ZoteroOneDriveOrganizer = {
     this._pending.set(itemID, promise);
   },
 
-  async validateBaseDirectory(baseDir = null) {
+  async validateBaseDirectory(baseDir = null, { testWrite = false } = {}) {
     baseDir = (baseDir ?? this.getPref("baseDir", "")).trim();
     if (!baseDir) {
       throw new Error("No OneDrive/external base folder is configured.");
@@ -106,7 +106,63 @@ var ZoteroOneDriveOrganizer = {
     if (stat.type !== "directory") {
       throw new Error(`Base path is not a folder: ${normalized}`);
     }
+
+    if (testWrite) {
+      const marker = PathUtils.join(
+        normalized,
+        `.zotero-onedrive-organizer-write-test-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}.tmp`
+      );
+      try {
+        await IOUtils.writeUTF8(marker, "Zotero OneDrive Organizer write test\n");
+        const markerStat = await IOUtils.stat(marker);
+        if (!markerStat.size) {
+          throw new Error("The write test created an empty/unreadable file.");
+        }
+      }
+      catch (e) {
+        try { await IOUtils.remove(marker, { ignoreAbsent: true }); } catch (_) {}
+        throw new Error(`Folder is not writable: ${normalized} (${e})`);
+      }
+      try {
+        await IOUtils.remove(marker, { ignoreAbsent: true });
+      }
+      catch (e) {
+        throw new Error(`Write test succeeded, but the temporary file could not be removed: ${e}`);
+      }
+    }
+
     return normalized;
+  },
+
+  async previewAttachment(itemOrID) {
+    const item = typeof itemOrID === "number"
+      ? await Zotero.Items.getAsync(itemOrID)
+      : itemOrID;
+
+    if (!item) return { status: "skipped", reason: "missing-item" };
+    const eligibility = await this._checkEligibility(item);
+    if (!eligibility.ok) {
+      return { status: "skipped", reason: eligibility.reason, itemID: item.id };
+    }
+
+    const baseDir = await this.validateBaseDirectory();
+    let sourcePath = "";
+    try { sourcePath = await item.getFilePathAsync() || ""; } catch (_) {}
+    if (!sourcePath) {
+      try { sourcePath = item.attachmentFilename || "attachment.pdf"; } catch (_) { sourcePath = "attachment.pdf"; }
+    }
+
+    const parent = item.parentID ? await Zotero.Items.getAsync(item.parentID) : item;
+    const destinationDir = await this._buildDestinationDirectory(baseDir, item, parent);
+    const destinationName = await this._buildFilename(item, parent, sourcePath);
+    const destinationPath = await this._uniquePath(destinationDir, destinationName);
+
+    return {
+      status: "preview",
+      itemID: item.id,
+      title: this._getTitle(parent),
+      destinationPath
+    };
   },
 
   async processAttachment(itemOrID, { quietSkip = false } = {}) {

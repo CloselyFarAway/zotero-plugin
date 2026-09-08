@@ -11,7 +11,8 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
       "zoo-auto-enabled", "zoo-base-dir", "zoo-browse", "zoo-check-folder",
       "zoo-library-folder", "zoo-collection-path", "zoo-year-folder",
       "zoo-unfiled", "zoo-template", "zoo-relative-paths",
-      "zoo-organize-selected", "zoo-organize-existing", "zoo-status"
+      "zoo-preview-selected", "zoo-organize-selected", "zoo-organize-existing",
+      "zoo-project-page", "zoo-report-issue", "zoo-version", "zoo-status"
     ];
     if (!required.every(id => document.getElementById(id))) return false;
 
@@ -33,12 +34,20 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
       .addEventListener("command", () => this.chooseBaseDir());
     document.getElementById("zoo-check-folder")
       .addEventListener("command", () => this.validateFolder());
+    document.getElementById("zoo-preview-selected")
+      .addEventListener("command", () => this.previewSelected());
     document.getElementById("zoo-organize-selected")
       .addEventListener("command", () => this.organizeSelected());
     document.getElementById("zoo-organize-existing")
       .addEventListener("command", () => this.organizeExisting());
+    document.getElementById("zoo-project-page")
+      .addEventListener("command", () => Zotero.launchURL("https://github.com/CloselyFarAway/zotero-plugin"));
+    document.getElementById("zoo-report-issue")
+      .addEventListener("command", () => Zotero.launchURL("https://github.com/CloselyFarAway/zotero-plugin/issues/new/choose"));
 
-    this._setStatus("Ready");
+    const versionLabel = document.getElementById("zoo-version");
+    if (versionLabel) versionLabel.value = `v${this.organizer?.version || "0.1.4"}`;
+    this._setStatus("Ready — Browse → Check folder → Preview → Organize");
     Zotero.debug("Zotero OneDrive Organizer: preference pane initialized");
     return true;
   },
@@ -114,14 +123,107 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
       // Save whatever is currently typed before validating it.
       const typed = String(document.getElementById("zoo-base-dir").value || "").trim();
       this._set("baseDir", typed);
-      const path = await this.organizer.validateBaseDirectory(typed);
+      const path = await this.organizer.validateBaseDirectory(typed, { testWrite: true });
       this._setStatus(`Folder OK — ${path}`);
-      this._alert("OneDrive Organizer", `Folder is accessible:\n${path}`);
+      this._alert("OneDrive Organizer", `Folder is accessible and writable:\n${path}`);
     }
     catch (e) {
       Zotero.logError(e);
       this._setStatus("Folder check failed");
       this._alert("OneDrive Organizer", `Folder check failed:\n${e}`);
+    }
+  },
+
+  _getSelectedAttachmentIDs() {
+    const pane = Zotero.getActiveZoteroPane();
+    const selected = pane?.getSelectedItems?.() || [];
+    const attachmentIDs = [];
+    const seen = new Set();
+
+    for (const item of selected) {
+      let ids = [];
+      if (item.isAttachment?.()) ids = [item.id];
+      else if (item.isRegularItem?.()) ids = item.getAttachments?.() || [];
+      for (const id of ids) {
+        if (!seen.has(id)) {
+          seen.add(id);
+          attachmentIDs.push(id);
+        }
+      }
+    }
+    return { selected, attachmentIDs };
+  },
+
+  _skipReasonText(reason) {
+    const labels = {
+      "not-attachment": "not an attachment",
+      "deleted": "deleted item",
+      "not-pdf": "not a PDF",
+      "not-stored-pdf": "already linked or not stored by Zotero",
+      "group-library-linked-files-unsupported": "Group Library (linked files unsupported)",
+      "missing-item": "missing item"
+    };
+    return labels[reason] || reason || "unknown reason";
+  },
+
+  async previewSelected() {
+    const button = document.getElementById("zoo-preview-selected");
+    button.disabled = true;
+    try {
+      const typed = String(document.getElementById("zoo-base-dir").value || "").trim();
+      this._set("baseDir", typed);
+      await this.organizer.validateBaseDirectory(typed);
+
+      const { selected, attachmentIDs } = this._getSelectedAttachmentIDs();
+      if (!selected.length) {
+        this._alert("OneDrive Organizer", "Select one or more Zotero items or PDF attachments first.");
+        return;
+      }
+      if (!attachmentIDs.length) {
+        this._alert("OneDrive Organizer", "The selected Zotero item(s) contain no attachments to preview.");
+        return;
+      }
+
+      const paths = [];
+      const skipped = [];
+      for (const id of attachmentIDs) {
+        try {
+          const result = await this.organizer.previewAttachment(id);
+          if (result.status === "preview") paths.push(result);
+          else skipped.push(result);
+        }
+        catch (e) {
+          skipped.push({ itemID: id, reason: String(e) });
+        }
+      }
+
+      let message = "Preview only — no files were moved.\n\n";
+      if (paths.length) {
+        message += paths.slice(0, 8).map((x, i) => `${i + 1}. ${x.destinationPath}`).join("\n\n");
+        if (paths.length > 8) message += `\n\n… and ${paths.length - 8} more path(s).`;
+      }
+      else {
+        message += "No eligible stored PDFs were found in the current selection.";
+      }
+      if (skipped.length) {
+        const counts = new Map();
+        for (const x of skipped) {
+          const label = this._skipReasonText(x.reason);
+          counts.set(label, (counts.get(label) || 0) + 1);
+        }
+        message += "\n\nSkipped: " + Array.from(counts.entries()).map(([k, v]) => `${v} × ${k}`).join(", ");
+      }
+
+      this._setStatus(`Preview — ${paths.length} eligible, ${skipped.length} skipped`);
+      this._alert("OneDrive Organizer — destination preview", message);
+    }
+    catch (e) {
+      Zotero.logError(e);
+      this._setStatus("Preview failed");
+      this._alert("OneDrive Organizer", `Could not preview selected items:\n${e}`);
+    }
+    finally {
+      button.disabled = false;
     }
   },
 
@@ -132,25 +234,10 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
       const typed = String(document.getElementById("zoo-base-dir").value || "").trim();
       this._set("baseDir", typed);
       await this.organizer.validateBaseDirectory(typed);
-      const pane = Zotero.getActiveZoteroPane();
-      const selected = pane?.getSelectedItems?.() || [];
+      const { selected, attachmentIDs } = this._getSelectedAttachmentIDs();
       if (!selected.length) {
         this._alert("OneDrive Organizer", "Select one or more items or PDF attachments in the Zotero library pane first.");
         return;
-      }
-
-      const attachmentIDs = [];
-      const seen = new Set();
-      for (const item of selected) {
-        let ids = [];
-        if (item.isAttachment?.()) ids = [item.id];
-        else if (item.isRegularItem?.()) ids = item.getAttachments?.() || [];
-        for (const id of ids) {
-          if (!seen.has(id)) {
-            seen.add(id);
-            attachmentIDs.push(id);
-          }
-        }
       }
 
       if (!attachmentIDs.length) {

@@ -21,8 +21,17 @@ jobs:
           python -c 'import json, os; v=json.load(open("manifest.json", encoding="utf-8"))["version"]; assert os.environ["GITHUB_REF_NAME"] == "v" + v, "tag %s != manifest v%s" % (os.environ["GITHUB_REF_NAME"], v)'
       - name: Build XPI
         run: python scripts/build.py
+      - name: Validate package and update manifest
+        run: python scripts/check.py
+      - name: JavaScript syntax check
+        run: |
+          node --check bootstrap.js
+          node --check organizer.js
+          node --check content/preferences.js
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.xpi
+          files: |
+            dist/*.xpi
+            dist/*.sha256
           generate_release_notes: true

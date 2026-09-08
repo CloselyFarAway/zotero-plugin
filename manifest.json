@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
   "name": "Zotero OneDrive Organizer",
-  "version": "0.1.3",
-  "description": "Moves stored PDF attachments from My Library into a OneDrive/external folder organized by Zotero collection, then replaces them with linked-file attachments.",
+  "version": "0.1.4",
+  "description": "Safely moves stored PDF attachments from My Library into OneDrive or another local/synced folder, mirrors Zotero collections, and replaces them with linked files.",
   "applications": {
     "zotero": {
       "id": "zotero-onedrive-organizer@closelyfaraway.github.io",

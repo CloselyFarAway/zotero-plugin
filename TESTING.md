@@ -1,25 +1,42 @@
-# Zotero 10.0.4 Manual Test Checklist
+# Zotero 10 Manual Test Checklist
 
-Use a disposable test item and an empty OneDrive test directory first.
+Target release: **v0.1.4**  
+Primary confirmed environment: **Zotero 10.0.4 / Windows**
 
-## Installation
+Use a disposable Zotero item and an empty OneDrive test directory first.
 
-- [ ] Zotero 10.0.4 accepts `zotero-onedrive-organizer-0.1.1.xpi`.
+## Installation and settings
+
+- [ ] Zotero accepts `zotero-onedrive-organizer-0.1.4.xpi`.
 - [ ] The plugin appears enabled under Tools → Plugins.
 - [ ] Settings → OneDrive Organizer opens without an error.
+- [ ] The settings pane shows `v0.1.4`.
+- [ ] Project page opens the GitHub repository.
+- [ ] Report a bug / request a feature opens GitHub Issues.
 
 ## Folder configuration
 
-- [ ] Browse can select the intended OneDrive directory.
-- [ ] Check folder reports that the directory is accessible.
+- [ ] Browse can select the intended OneDrive/external directory.
+- [ ] The selected path remains saved after closing and reopening Settings.
+- [ ] Check folder reports success for a writable folder.
+- [ ] Check folder fails safely for an invalid or non-writable path.
+- [ ] No temporary `.zotero-onedrive-organizer-write-test-*` file remains after the check.
 - [ ] Automatic organization is off after a fresh installation.
 
-## Single-PDF functional test
+## Preview test
 
 Create a temporary collection such as `Plugin Test/Subcollection`, then add one article with one stored PDF.
 
-- [ ] With automatic organization off, the PDF remains stored by Zotero.
-- [ ] `Organize selected item(s)` processes only the selected disposable test item/attachment.
+- [ ] Select the test article and click **Preview selected path(s)…**.
+- [ ] The preview displays the expected root/library/collection/filename path.
+- [ ] The stored PDF remains unchanged after preview.
+- [ ] No destination file or folder is created solely by preview.
+- [ ] Previewing an already-linked PDF reports it as skipped.
+
+## Single-PDF functional test
+
+- [ ] With automatic organization off, the PDF remains stored until manual organization.
+- [ ] `Organize selected item(s)` processes only the selected disposable item/attachment.
 - [ ] The external path mirrors the selected collection hierarchy.
 - [ ] The filename follows the configured template.
 - [ ] Zotero shows the resulting attachment as a linked file.
@@ -39,7 +56,7 @@ After the manual test succeeds:
 
 - [ ] Enable automatic organization.
 - [ ] Add a second disposable article + PDF.
-- [ ] After the processing delay, the PDF appears in OneDrive automatically.
+- [ ] After the processing delay, the PDF appears in the external folder automatically.
 - [ ] The Zotero attachment opens normally.
 
 ## Negative/safety tests
@@ -49,5 +66,19 @@ After the manual test succeeds:
 - [ ] A linked PDF is skipped rather than duplicated.
 - [ ] Group Library attachments are skipped.
 - [ ] A duplicate destination filename gets a numbered suffix instead of overwriting a file.
+- [ ] Uninstalling the plugin leaves already-linked files usable in Zotero.
 
-If any test fails, disable automatic organization and preserve the original Zotero data directory before debugging.
+## Build validation
+
+```bash
+python scripts/build.py
+python scripts/generate_updates.py
+python scripts/check.py
+```
+
+- [ ] The local build succeeds.
+- [ ] The SHA-256 checksum file is created.
+- [ ] Running `scripts/build.py` again without source changes produces the same SHA-256.
+- [ ] `scripts/check.py` passes.
+
+If any file-moving test fails, disable automatic organization and preserve the original Zotero data directory before debugging.

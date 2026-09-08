@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest an improvement or new workflow
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What workflow is difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should the plugin do?
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: File-safety considerations
+      description: If this feature moves/deletes/renames files, describe the safest behavior you expect.

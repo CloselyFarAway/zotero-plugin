@@ -1,9 +1,16 @@
 <vbox xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
       xmlns:html="http://www.w3.org/1999/xhtml">
   <groupbox>
-    <label><html:h2>Zotero OneDrive Organizer</html:h2></label>
+    <hbox align="center">
+      <label><html:h2>Zotero OneDrive Organizer</html:h2></label>
+      <spacer flex="1" />
+      <label id="zoo-version" value="v0.1.4" />
+    </hbox>
     <description>
       Move stored PDFs from My Library into a OneDrive/external folder and keep them in Zotero as linked files.
+    </description>
+    <description>
+      Recommended first run: Browse → Check folder → Preview selected path(s) → Organize selected item(s).
     </description>
 
     <checkbox id="zoo-auto-enabled"
@@ -21,6 +28,9 @@
       <button id="zoo-browse" label="Browse…" />
       <button id="zoo-check-folder" label="Check folder" />
     </hbox>
+    <description>
+      Check folder verifies that the path exists and that Zotero can create and remove a temporary file there.
+    </description>
 
     <separator class="thin" />
 
@@ -63,9 +73,16 @@
     <separator />
 
     <hbox align="center">
+      <button id="zoo-preview-selected" label="Preview selected path(s)…" />
       <button id="zoo-organize-selected" label="Organize selected item(s)" />
       <button id="zoo-organize-existing" label="Organize ALL existing PDFs…" />
-      <label id="zoo-status" value="" style="margin-left: 1em;" />
+    </hbox>
+    <label id="zoo-status" value="" style="margin-top: 0.5em;" />
+
+    <separator class="thin" />
+    <hbox align="center">
+      <button id="zoo-project-page" label="Project page" />
+      <button id="zoo-report-issue" label="Report a bug / request a feature" />
     </hbox>
 
     <separator class="thin" />

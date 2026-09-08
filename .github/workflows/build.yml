@@ -15,7 +15,16 @@ jobs:
           python-version: "3.x"
       - name: Build XPI
         run: python scripts/build.py
+      - name: Validate package and update manifest
+        run: python scripts/check.py
+      - name: JavaScript syntax check
+        run: |
+          node --check bootstrap.js
+          node --check organizer.js
+          node --check content/preferences.js
       - uses: actions/upload-artifact@v4
         with:
           name: zotero-onedrive-organizer-xpi
-          path: dist/*.xpi
+          path: |
+            dist/*.xpi
+            dist/*.sha256
