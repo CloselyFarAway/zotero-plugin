@@ -8,11 +8,11 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
     if (this._initialized) return true;
 
     const required = [
-      "zoo-auto-enabled", "zoo-base-dir", "zoo-browse", "zoo-check-folder",
+      "zoo-auto-enabled", "zoo-wait-metadata", "zoo-base-dir", "zoo-browse", "zoo-check-folder",
       "zoo-library-folder", "zoo-collection-path", "zoo-year-folder",
       "zoo-unfiled", "zoo-template", "zoo-relative-paths",
-      "zoo-preview-selected", "zoo-organize-selected", "zoo-organize-existing",
-      "zoo-project-page", "zoo-report-issue", "zoo-version", "zoo-status"
+      "zoo-preview-selected", "zoo-organize-selected", "zoo-rename-selected", "zoo-organize-existing",
+      "zoo-delete-external", "zoo-project-page", "zoo-report-issue", "zoo-version", "zoo-status"
     ];
     if (!required.every(id => document.getElementById(id))) return false;
 
@@ -22,6 +22,7 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
     // `preference=` binding. This also makes the pane robust if native binding
     // behavior changes across Zotero versions.
     this._bindCheckbox("zoo-auto-enabled", "autoEnabled", false);
+    this._bindCheckbox("zoo-wait-metadata", "waitForMetadata", true);
     this._bindText("zoo-base-dir", "baseDir", "");
     this._bindCheckbox("zoo-library-folder", "includeLibraryFolder", true);
     this._bindCheckbox("zoo-collection-path", "includeCollectionPath", true);
@@ -29,6 +30,7 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
     this._bindText("zoo-unfiled", "unfiledFolder", "_Unfiled");
     this._bindText("zoo-template", "filenameTemplate", "{firstCreator}_{year}_{title}");
     this._bindCheckbox("zoo-relative-paths", "useRelativePaths", false);
+    this._bindCheckbox("zoo-delete-external", "deleteExternalOnPermanentDelete", false);
 
     document.getElementById("zoo-browse")
       .addEventListener("command", () => this.chooseBaseDir());
@@ -38,6 +40,8 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
       .addEventListener("command", () => this.previewSelected());
     document.getElementById("zoo-organize-selected")
       .addEventListener("command", () => this.organizeSelected());
+    document.getElementById("zoo-rename-selected")
+      .addEventListener("command", () => this.renameSelectedLinked());
     document.getElementById("zoo-organize-existing")
       .addEventListener("command", () => this.organizeExisting());
     document.getElementById("zoo-project-page")
@@ -45,8 +49,31 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
     document.getElementById("zoo-report-issue")
       .addEventListener("command", () => Zotero.launchURL("https://github.com/CloselyFarAway/zotero-plugin/issues/new/choose"));
 
+    document.getElementById("zoo-delete-external").addEventListener("command", async () => {
+      const box = document.getElementById("zoo-delete-external");
+      if (!box.checked) return;
+      const confirmed = Services.prompt.confirm(
+        window,
+        "OneDrive Organizer — permanent deletion",
+        `When enabled, permanently deleting an item from Zotero (Delete Permanently / Empty Trash) will also delete managed linked PDFs inside the configured external root.\n\nMoving an item to Trash alone will NOT delete the file.\n\nEnable this option?`
+      );
+      if (!confirmed) {
+        box.checked = false;
+        this._set("deleteExternalOnPermanentDelete", false);
+        return;
+      }
+      try {
+        await this.organizer.rebuildManagedPathCache();
+        this._setStatus("Permanent-delete cleanup enabled — linked-file cache refreshed");
+      }
+      catch (e) {
+        Zotero.logError(e);
+        this._setStatus("Deletion cache refresh failed");
+      }
+    });
+
     const versionLabel = document.getElementById("zoo-version");
-    if (versionLabel) versionLabel.value = `v${this.organizer?.version || "0.1.4"}`;
+    if (versionLabel) versionLabel.value = `v${this.organizer?.version || "0.1.5"}`;
     this._setStatus("Ready — Browse → Check folder → Preview → Organize");
     Zotero.debug("Zotero OneDrive Organizer: preference pane initialized");
     return true;
@@ -124,6 +151,7 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
       const typed = String(document.getElementById("zoo-base-dir").value || "").trim();
       this._set("baseDir", typed);
       const path = await this.organizer.validateBaseDirectory(typed, { testWrite: true });
+      await this.organizer.rebuildManagedPathCache();
       this._setStatus(`Folder OK — ${path}`);
       this._alert("OneDrive Organizer", `Folder is accessible and writable:\n${path}`);
     }
@@ -160,7 +188,12 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
       "deleted": "deleted item",
       "not-pdf": "not a PDF",
       "not-stored-pdf": "already linked or not stored by Zotero",
+      "not-linked-pdf": "not a linked PDF",
       "group-library-linked-files-unsupported": "Group Library (linked files unsupported)",
+      "metadata-not-ready": "bibliographic metadata not ready",
+      "file-not-local": "file not available locally",
+      "outside-configured-root": "linked file is outside the configured root",
+      "already-named": "already has the metadata-based filename",
       "missing-item": "missing item"
     };
     return labels[reason] || reason || "unknown reason";
@@ -270,6 +303,94 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
       Zotero.logError(e);
       this._alert("OneDrive Organizer", `Could not process selected items:\n${e}`);
       this._setStatus("Error");
+    }
+    finally {
+      button.disabled = false;
+    }
+  },
+
+  async renameSelectedLinked() {
+    const button = document.getElementById("zoo-rename-selected");
+    button.disabled = true;
+    try {
+      const typed = String(document.getElementById("zoo-base-dir").value || "").trim();
+      this._set("baseDir", typed);
+      await this.organizer.validateBaseDirectory(typed);
+
+      const { selected, attachmentIDs } = this._getSelectedAttachmentIDs();
+      if (!selected.length) {
+        this._alert("OneDrive Organizer", "Select one or more Zotero items or linked PDF attachments first.");
+        return;
+      }
+      if (!attachmentIDs.length) {
+        this._alert("OneDrive Organizer", "The selected Zotero item(s) contain no attachments.");
+        return;
+      }
+
+      const previews = [];
+      const skipped = [];
+      for (const id of attachmentIDs) {
+        try {
+          const result = await this.organizer.previewRenameLinkedAttachment(id);
+          if (result.status === "preview") previews.push(result);
+          else skipped.push(result);
+        }
+        catch (e) {
+          skipped.push({ itemID: id, reason: String(e) });
+        }
+      }
+
+      if (!previews.length) {
+        const counts = new Map();
+        for (const x of skipped) {
+          const label = this._skipReasonText(x.reason);
+          counts.set(label, (counts.get(label) || 0) + 1);
+        }
+        this._alert(
+          "OneDrive Organizer",
+          "No selected linked PDFs need renaming.\n\n" +
+          (counts.size ? "Skipped: " + Array.from(counts.entries()).map(([k, v]) => `${v} × ${k}`).join(", ") : "")
+        );
+        return;
+      }
+
+      let previewText = previews.slice(0, 8).map((x, i) =>
+        `${i + 1}. ${x.currentPath}\n   → ${x.destinationPath}`
+      ).join("\n\n");
+      if (previews.length > 8) previewText += `\n\n… and ${previews.length - 8} more.`;
+
+      const confirmed = Services.prompt.confirm(
+        window,
+        "OneDrive Organizer — rename linked PDFs",
+        `This changes filenames in place and updates Zotero's linked paths. No collection folders will be moved.\n\n${previewText}\n\nContinue?`
+      );
+      if (!confirmed) return;
+
+      const stats = { renamed: 0, skipped: 0, failed: 0, failures: [] };
+      for (let i = 0; i < previews.length; i++) {
+        try {
+          const result = await this.organizer.renameLinkedAttachment(previews[i].itemID);
+          if (result.status === "renamed") stats.renamed++;
+          else stats.skipped++;
+        }
+        catch (e) {
+          stats.failed++;
+          stats.failures.push(String(e));
+          Zotero.logError(e);
+        }
+        this._setStatus(`${i + 1}/${previews.length} — renamed ${stats.renamed}, failed ${stats.failed}`);
+      }
+
+      const detail = stats.failures.length ? `\n\nFirst error: ${stats.failures[0]}` : "";
+      this._alert(
+        "OneDrive Organizer",
+        `Rename finished.\n\nRenamed: ${stats.renamed}\nSkipped: ${stats.skipped + skipped.length}\nFailed: ${stats.failed}${detail}`
+      );
+    }
+    catch (e) {
+      Zotero.logError(e);
+      this._setStatus("Rename failed");
+      this._alert("OneDrive Organizer", `Could not rename selected linked PDFs:\n${e}`);
     }
     finally {
       button.disabled = false;

@@ -4,7 +4,7 @@
     <hbox align="center">
       <label><html:h2>Zotero OneDrive Organizer</html:h2></label>
       <spacer flex="1" />
-      <label id="zoo-version" value="v0.1.4" />
+      <label id="zoo-version" value="v0.1.5" />
     </hbox>
     <description>
       Move stored PDFs from My Library into a OneDrive/external folder and keep them in Zotero as linked files.
@@ -16,6 +16,12 @@
     <checkbox id="zoo-auto-enabled"
               preference="extensions.zotero-onedrive-organizer.autoEnabled"
               label="Automatically organize newly added stored PDFs (off by default for safety)" />
+    <checkbox id="zoo-wait-metadata"
+              preference="extensions.zotero-onedrive-organizer.waitForMetadata"
+              label="Wait for bibliographic metadata before automatic organization (recommended)" />
+    <description>
+      Prevents publisher/server names such as cm5c00977_1.9.pdf from becoming the final OneDrive filename.
+    </description>
 
     <separator class="thin" />
 
@@ -75,9 +81,20 @@
     <hbox align="center">
       <button id="zoo-preview-selected" label="Preview selected path(s)…" />
       <button id="zoo-organize-selected" label="Organize selected item(s)" />
+    </hbox>
+    <hbox align="center">
+      <button id="zoo-rename-selected" label="Rename selected linked PDF(s)…" />
       <button id="zoo-organize-existing" label="Organize ALL existing PDFs…" />
     </hbox>
     <label id="zoo-status" value="" style="margin-top: 0.5em;" />
+
+    <separator class="thin" />
+    <checkbox id="zoo-delete-external"
+              preference="extensions.zotero-onedrive-organizer.deleteExternalOnPermanentDelete"
+              label="Delete external PDF when it is permanently deleted from Zotero (advanced, off by default)" />
+    <description>
+      Moving an item to Zotero Trash does not delete the OneDrive file. The file is removed only on Delete Permanently / Empty Trash, and only when it is inside the configured root folder.
+    </description>
 
     <separator class="thin" />
     <hbox align="center">

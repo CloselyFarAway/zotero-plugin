@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.5 - 2026-09-08
+
+- Add metadata-aware automatic organization: stored PDFs without a usable bibliographic parent are left in Zotero storage and retried instead of being committed with publisher/server filenames.
+- Add a conservative machine-filename heuristic for names such as `cm5c00977_1.9`, numeric IDs, and generic `download.pdf` / `article.pdf` names.
+- Reschedule stored child PDFs when their parent bibliographic item is added or modified, so late-arriving metadata can trigger organization.
+- Add **Rename selected linked PDF(s)…** to repair existing filenames from Zotero metadata without moving collection folders.
+- Rename linked files with filesystem-size verification and rollback if the Zotero path update fails.
+- Add optional **Delete external PDF when it is permanently deleted from Zotero** behavior.
+- Keep permanent-delete cleanup **OFF by default** and never delete external files when items are merely moved to Zotero Trash.
+- Restrict external deletion to linked PDFs inside the currently configured root folder.
+- Build an in-memory index of existing linked PDFs under the configured root, including items already in Zotero Trash, so v0.1.3/v0.1.4-organized files can participate after the user explicitly enables cleanup.
+- Preserve upgrade compatibility: updating to v0.1.5 does not automatically move, rename, or delete existing linked PDFs.
+- Update English/Korean documentation and manual test coverage for metadata naming, rename repair, and permanent deletion.
+
 ## 0.1.4 - 2026-09-08
 
 - Add **Preview selected path(s)…** so users can inspect planned destinations without moving files.
@@ -11,7 +25,6 @@
 - Add `CONTRIBUTING.md`, bug/feature issue forms, and a pull-request safety checklist.
 - Make XPI builds reproducible and generate SHA-256 checksum files.
 - Add `scripts/check.py` and update GitHub Actions to validate manifests, update metadata, package structure, and JavaScript syntax.
-- Update `updates.json` to publish a SHA-256-verified v0.1.4 update.
 
 ## 0.1.3
 
@@ -30,14 +43,11 @@
 ## 0.1.1 - 2026-09-08
 
 - Set permanent plugin ID: `zotero-onedrive-organizer@closelyfaraway.github.io`.
-- Added GitHub homepage and author metadata.
-- Changed fresh-install automatic organization default to **off** for safer testing.
-- Added **Check folder** validation in the settings pane.
-- Added **Organize selected item(s)** for single-item testing without bulk migration.
-- Added an explicit confirmation showing the eligible PDF count before bulk migration.
-- Clarified README wording to match the actual stored-attachment → linked-attachment replacement model.
-- Added a Zotero 10.0.4 manual test checklist.
-- Updated MIT copyright holder to `CloselyFarAway`.
+- Add GitHub homepage and author metadata.
+- Change fresh-install automatic organization default to **off**.
+- Add **Check folder** validation.
+- Add **Organize selected item(s)**.
+- Add bulk-migration confirmation with eligible PDF count.
 
 ## 0.1.0
 
