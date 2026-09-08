@@ -1,11 +1,25 @@
-var ZoteroOneDriveOrganizerPrefs = {
+/* Zotero OneDrive Organizer — preference pane, Zotero 10 */
+
+globalThis.ZoteroOneDriveOrganizerPrefs = {
   PREF: "extensions.zotero-onedrive-organizer.",
   _initialized: false,
 
   init() {
-    if (this._initialized) return;
+    if (this._initialized) return true;
+
+    const required = [
+      "zoo-auto-enabled", "zoo-base-dir", "zoo-browse", "zoo-check-folder",
+      "zoo-library-folder", "zoo-collection-path", "zoo-year-folder",
+      "zoo-unfiled", "zoo-template", "zoo-relative-paths",
+      "zoo-organize-selected", "zoo-organize-existing", "zoo-status"
+    ];
+    if (!required.every(id => document.getElementById(id))) return false;
+
     this._initialized = true;
 
+    // Explicitly initialize values as a fallback in addition to Zotero's native
+    // `preference=` binding. This also makes the pane robust if native binding
+    // behavior changes across Zotero versions.
     this._bindCheckbox("zoo-auto-enabled", "autoEnabled", false);
     this._bindText("zoo-base-dir", "baseDir", "");
     this._bindCheckbox("zoo-library-folder", "includeLibraryFolder", true);
@@ -14,6 +28,19 @@ var ZoteroOneDriveOrganizerPrefs = {
     this._bindText("zoo-unfiled", "unfiledFolder", "_Unfiled");
     this._bindText("zoo-template", "filenameTemplate", "{firstCreator}_{year}_{title}");
     this._bindCheckbox("zoo-relative-paths", "useRelativePaths", false);
+
+    document.getElementById("zoo-browse")
+      .addEventListener("command", () => this.chooseBaseDir());
+    document.getElementById("zoo-check-folder")
+      .addEventListener("command", () => this.validateFolder());
+    document.getElementById("zoo-organize-selected")
+      .addEventListener("command", () => this.organizeSelected());
+    document.getElementById("zoo-organize-existing")
+      .addEventListener("command", () => this.organizeExisting());
+
+    this._setStatus("Ready");
+    Zotero.debug("Zotero OneDrive Organizer: preference pane initialized");
+    return true;
   },
 
   get organizer() {
@@ -32,15 +59,17 @@ var ZoteroOneDriveOrganizerPrefs = {
   _bindCheckbox(id, prefName, fallback) {
     const element = document.getElementById(id);
     element.checked = Boolean(this._get(prefName, fallback));
-    element.addEventListener("command", () => this._set(prefName, element.checked));
+    const save = () => this._set(prefName, Boolean(element.checked));
+    element.addEventListener("command", save);
+    element.addEventListener("change", save);
   },
 
   _bindText(id, prefName, fallback) {
     const element = document.getElementById(id);
     element.value = String(this._get(prefName, fallback) ?? "");
-    const save = () => this._set(prefName, element.value);
-    element.addEventListener("change", save);
+    const save = () => this._set(prefName, String(element.value ?? ""));
     element.addEventListener("input", save);
+    element.addEventListener("change", save);
   },
 
   async chooseBaseDir() {
@@ -49,27 +78,43 @@ var ZoteroOneDriveOrganizerPrefs = {
         "chrome://zotero/content/modules/filePicker.mjs"
       );
       const fp = new FilePicker();
-      const win = Services.wm.getMostRecentWindow("navigator:browser");
-      fp.init(win, "Choose OneDrive / external root folder", fp.modeGetFolder);
-      fp.appendFilters(fp.filterAll);
+      const parentWindow = Zotero.getMainWindow?.() || window;
+      fp.init(parentWindow, "Choose OneDrive / external root folder", fp.modeGetFolder);
+
+      const current = String(this._get("baseDir", "") || "").trim();
+      if (current && await IOUtils.exists(current)) {
+        try { fp.displayDirectory = current; } catch (_) {}
+      }
 
       const result = await fp.show();
-      if (result !== fp.returnOK) return;
+      if (result !== fp.returnOK && result !== fp.returnReplace) return;
 
-      const path = String(fp.file);
+      // Zotero's FilePicker returns a path string in current versions, while
+      // older implementations may expose an nsIFile-like object.
+      let path = fp.file;
+      if (path && typeof path !== "string") {
+        path = path.path || String(path);
+      }
+      path = String(path || "").trim();
+      if (!path) throw new Error("The folder picker returned an empty path.");
+
       document.getElementById("zoo-base-dir").value = path;
       this._set("baseDir", path);
-      this._setStatus("Folder selected.");
+      this._setStatus("Folder selected — click Check folder");
     }
     catch (e) {
       Zotero.logError(e);
+      this._setStatus("Folder selection failed");
       this._alert("Folder selection failed", String(e));
     }
   },
 
   async validateFolder() {
     try {
-      const path = await this.organizer.validateBaseDirectory();
+      // Save whatever is currently typed before validating it.
+      const typed = String(document.getElementById("zoo-base-dir").value || "").trim();
+      this._set("baseDir", typed);
+      const path = await this.organizer.validateBaseDirectory(typed);
       this._setStatus(`Folder OK — ${path}`);
       this._alert("OneDrive Organizer", `Folder is accessible:\n${path}`);
     }
@@ -84,7 +129,9 @@ var ZoteroOneDriveOrganizerPrefs = {
     const button = document.getElementById("zoo-organize-selected");
     button.disabled = true;
     try {
-      await this.organizer.validateBaseDirectory();
+      const typed = String(document.getElementById("zoo-base-dir").value || "").trim();
+      this._set("baseDir", typed);
+      await this.organizer.validateBaseDirectory(typed);
       const pane = Zotero.getActiveZoteroPane();
       const selected = pane?.getSelectedItems?.() || [];
       if (!selected.length) {
@@ -96,12 +143,8 @@ var ZoteroOneDriveOrganizerPrefs = {
       const seen = new Set();
       for (const item of selected) {
         let ids = [];
-        if (item.isAttachment?.()) {
-          ids = [item.id];
-        }
-        else if (item.isRegularItem?.()) {
-          ids = item.getAttachments?.() || [];
-        }
+        if (item.isAttachment?.()) ids = [item.id];
+        else if (item.isRegularItem?.()) ids = item.getAttachments?.() || [];
         for (const id of ids) {
           if (!seen.has(id)) {
             seen.add(id);
@@ -150,7 +193,9 @@ var ZoteroOneDriveOrganizerPrefs = {
     const button = document.getElementById("zoo-organize-existing");
     button.disabled = true;
     try {
-      await this.organizer.validateBaseDirectory();
+      const typed = String(document.getElementById("zoo-base-dir").value || "").trim();
+      this._set("baseDir", typed);
+      await this.organizer.validateBaseDirectory(typed);
       const eligible = await this.organizer.countEligible();
       if (!eligible) {
         this._alert("OneDrive Organizer", "No eligible stored PDFs were found in My Library.");
@@ -170,9 +215,7 @@ var ZoteroOneDriveOrganizerPrefs = {
         }
       });
 
-      const detail = stats.failures.length
-        ? `\n\nFirst error: ${stats.failures[0].message}`
-        : "";
+      const detail = stats.failures.length ? `\n\nFirst error: ${stats.failures[0].message}` : "";
       this._alert(
         "OneDrive Organizer",
         `Finished.\n\nProcessed: ${stats.processed}\nSkipped: ${stats.skipped}\nFailed: ${stats.failed}${detail}`
@@ -190,15 +233,34 @@ var ZoteroOneDriveOrganizerPrefs = {
   },
 
   _setStatus(text) {
-    document.getElementById("zoo-status").value = text;
+    const el = document.getElementById("zoo-status");
+    if (el) el.value = text;
   },
 
   _alert(title, message) {
     try {
       Services.prompt.alert(window, title, message);
     }
-    catch (e) {
+    catch (_) {
       window.alert(message);
     }
   }
 };
+
+// Preference-pane scripts can be loaded after the pane document's normal load
+// event, so don't rely on an inline onload handler. Poll briefly until Zotero
+// has inserted the fragment, then wire all events explicitly.
+(function initializePreferencePane(attempt = 0) {
+  try {
+    if (globalThis.ZoteroOneDriveOrganizerPrefs.init()) return;
+  }
+  catch (e) {
+    Zotero.logError(e);
+  }
+  if (attempt < 100) {
+    setTimeout(() => initializePreferencePane(attempt + 1), 25);
+  }
+  else {
+    Zotero.logError(new Error("Zotero OneDrive Organizer preference pane failed to initialize"));
+  }
+})();

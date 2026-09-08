@@ -1,6 +1,5 @@
 <vbox xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
-      xmlns:html="http://www.w3.org/1999/xhtml"
-      onload="ZoteroOneDriveOrganizerPrefs.init()">
+      xmlns:html="http://www.w3.org/1999/xhtml">
   <groupbox>
     <label><html:h2>Zotero OneDrive Organizer</html:h2></label>
     <description>
@@ -8,37 +7,54 @@
     </description>
 
     <checkbox id="zoo-auto-enabled"
+              preference="extensions.zotero-onedrive-organizer.autoEnabled"
               label="Automatically organize newly added stored PDFs (off by default for safety)" />
 
     <separator class="thin" />
 
     <label value="OneDrive / external root folder" />
     <hbox align="center">
-      <html:input id="zoo-base-dir" type="text" style="min-width: 36em; flex: 1;" />
-      <button id="zoo-browse" label="Browse…" oncommand="ZoteroOneDriveOrganizerPrefs.chooseBaseDir()" />
-      <button id="zoo-check-folder" label="Check folder" oncommand="ZoteroOneDriveOrganizerPrefs.validateFolder()" />
+      <html:input id="zoo-base-dir"
+                  type="text"
+                  preference="extensions.zotero-onedrive-organizer.baseDir"
+                  style="min-width: 36em; flex: 1;" />
+      <button id="zoo-browse" label="Browse…" />
+      <button id="zoo-check-folder" label="Check folder" />
     </hbox>
 
     <separator class="thin" />
 
-    <checkbox id="zoo-library-folder" label="Include library folder (for example: My Library)" />
-    <checkbox id="zoo-collection-path" label="Mirror collection/subcollection path" />
-    <checkbox id="zoo-year-folder" label="Add publication year as a folder" />
+    <checkbox id="zoo-library-folder"
+              preference="extensions.zotero-onedrive-organizer.includeLibraryFolder"
+              label="Include library folder (for example: My Library)" />
+    <checkbox id="zoo-collection-path"
+              preference="extensions.zotero-onedrive-organizer.includeCollectionPath"
+              label="Mirror collection/subcollection path" />
+    <checkbox id="zoo-year-folder"
+              preference="extensions.zotero-onedrive-organizer.includeYearFolder"
+              label="Add publication year as a folder" />
 
     <hbox align="center">
       <label value="Folder name for items not in a collection:" />
-      <html:input id="zoo-unfiled" type="text" style="width: 14em;" />
+      <html:input id="zoo-unfiled"
+                  type="text"
+                  preference="extensions.zotero-onedrive-organizer.unfiledFolder"
+                  style="width: 14em;" />
     </hbox>
 
     <separator class="thin" />
 
     <label value="Filename template" />
-    <html:input id="zoo-template" type="text" style="min-width: 36em;" />
+    <html:input id="zoo-template"
+                type="text"
+                preference="extensions.zotero-onedrive-organizer.filenameTemplate"
+                style="min-width: 36em;" />
     <description>
       Tokens: {firstCreator}, {year}, {title}, {itemKey}, {attachmentKey}
     </description>
 
     <checkbox id="zoo-relative-paths"
+              preference="extensions.zotero-onedrive-organizer.useRelativePaths"
               label="Use Zotero relative linked-file paths when safe (useful across multiple computers)" />
     <description>
       This will set Zotero's linked-attachment base directory only if no conflicting base directory already exists.
@@ -47,12 +63,8 @@
     <separator />
 
     <hbox align="center">
-      <button id="zoo-organize-selected"
-              label="Organize selected item(s)"
-              oncommand="ZoteroOneDriveOrganizerPrefs.organizeSelected()" />
-      <button id="zoo-organize-existing"
-              label="Organize ALL existing PDFs…"
-              oncommand="ZoteroOneDriveOrganizerPrefs.organizeExisting()" />
+      <button id="zoo-organize-selected" label="Organize selected item(s)" />
+      <button id="zoo-organize-existing" label="Organize ALL existing PDFs…" />
       <label id="zoo-status" value="" style="margin-left: 1em;" />
     </hbox>
 
