@@ -1,6 +1,6 @@
 /*
  * Zotero OneDrive Organizer
- * v0.1.5
+ * v0.1.6
  *
  * Safety model:
  *   1. Copy the stored PDF to the external folder.
@@ -16,10 +16,8 @@ var ZoteroOneDriveOrganizer = {
   _observerID: null,
   _pending: new Map(),
   _busy: new Set(),
-  _metadataRetries: new Map(),
-  _metadataRetryCounts: new Map(),
-  _managedPathCache: new Map(),
-  _cacheReadyPromise: null,
+  _collectionRetries: new Map(),
+  _collectionRetryCounts: new Map(),
   _shuttingDown: false,
 
   async init({ id, version, rootURI }) {
@@ -30,21 +28,13 @@ var ZoteroOneDriveOrganizer = {
 
     this._observerID = Zotero.Notifier.registerObserver(
       {
-        notify: (event, type, ids, extraData) => this._onNotify(event, type, ids, extraData)
+        notify: (event, type, ids) => this._onNotify(event, type, ids)
       },
       ["item"],
       "zotero-onedrive-organizer"
     );
 
     this.log("Notifier registered");
-
-    // Build an in-memory index of existing linked PDFs under the configured
-    // root. This is deliberately non-blocking at startup. A permanent-delete
-    // event awaits the same promise before touching any external file.
-    this._cacheReadyPromise = this.rebuildManagedPathCache().catch(e => {
-      this.error(e, "Initial linked-file cache build");
-      return 0;
-    });
   },
 
   shutdown() {
@@ -55,10 +45,8 @@ var ZoteroOneDriveOrganizer = {
     }
     this._pending.clear();
     this._busy.clear();
-    this._metadataRetries.clear();
-    this._metadataRetryCounts.clear();
-    this._managedPathCache.clear();
-    this._cacheReadyPromise = null;
+    this._collectionRetries.clear();
+    this._collectionRetryCounts.clear();
   },
 
   log(message) {
@@ -80,39 +68,19 @@ var ZoteroOneDriveOrganizer = {
     Zotero.Prefs.set(this.PREF + name, value);
   },
 
-  _onNotify(event, type, ids, extraData = {}) {
+  _onNotify(event, type, ids) {
     if (this._shuttingDown || type !== "item" || !Array.isArray(ids)) return;
-
-    // Zotero's `delete` notifier fires for permanent deletion, while moving an
-    // item to Trash is a separate `trash` event. External-file deletion is
-    // therefore intentionally limited to permanent deletion only.
-    if (event === "delete") {
-      if (this.getPref("deleteExternalOnPermanentDelete", false)) {
-        this._handlePermanentDelete(ids, extraData).catch(e =>
-          this.error(e, "Permanent-delete external cleanup")
-        );
-      }
-      for (const id of ids) {
-        if (typeof id === "number") this._clearMetadataRetry(id);
-      }
-      return;
-    }
-
-    if (event !== "add" && event !== "modify" && event !== "trash") return;
-
-    // Keep the deletion cache current even when automatic organization is off.
-    this._refreshManagedCacheForIDs(ids).catch(e =>
-      this.error(e, `Refreshing linked-file cache after ${event}`)
-    );
-
     if (!this.getPref("autoEnabled", false)) return;
-    if (event === "trash") return;
+    if (event !== "add" && event !== "modify") return;
 
     for (const id of ids) {
       if (typeof id !== "number") continue;
       this.schedule(id);
-      // Parent metadata may arrive after the attachment. When a bibliographic
-      // item changes, reschedule its stored PDF children as well.
+
+      // Connector imports can assign the parent item to the selected collection
+      // shortly after the PDF attachment itself is created. If the regular item
+      // changes, also reschedule its stored PDF children so we see the final
+      // collection membership as soon as Zotero records it.
       this._scheduleChildAttachments(id).catch(e =>
         this.error(e, `Scheduling child attachments for ${id}`)
       );
@@ -140,56 +108,55 @@ var ZoteroOneDriveOrganizer = {
   async _scheduleChildAttachments(itemID) {
     const item = await Zotero.Items.getAsync(itemID);
     if (!item || !item.isRegularItem?.() || item.deleted) return;
+
     let attachmentIDs = [];
-    try { attachmentIDs = item.getAttachments?.() || []; } catch (_) {}
+    try {
+      attachmentIDs = item.getAttachments?.() || [];
+    }
+    catch (_) {}
+
     for (const attachmentID of attachmentIDs) {
       if (typeof attachmentID === "number") this.schedule(attachmentID);
     }
   },
 
-  async _getBibliographicParent(attachment) {
-    if (!attachment?.parentID) return { ready: false, parent: null };
-    const parent = await Zotero.Items.getAsync(attachment.parentID);
-    if (!parent || !parent.isRegularItem?.() || parent.deleted) {
-      return { ready: false, parent: null };
-    }
-    const title = this._getTitle(parent);
-    if (!title || title === "Untitled" || this._looksLikeMachineFilename(title)) {
-      return { ready: false, parent };
-    }
-    return { ready: true, parent };
-  },
+  _scheduleCollectionRetry(itemID) {
+    if (this._shuttingDown) return false;
+    if (this._collectionRetries.has(itemID)) return true;
 
-  _scheduleMetadataRetry(itemID) {
-    if (this._shuttingDown || this._metadataRetries.has(itemID)) return;
+    const maxRetries = Math.max(1, Number(this.getPref("collectionMaxRetries", 8)) || 8);
+    const retryDelay = Math.max(500, Number(this.getPref("collectionRetryMs", 1500)) || 1500);
+    const attempt = Number(this._collectionRetryCounts.get(itemID) || 0);
 
-    const maxRetries = Math.max(1, Number(this.getPref("metadataMaxRetries", 12)) || 12);
-    const retryDelay = Math.max(1000, Number(this.getPref("metadataRetryMs", 5000)) || 5000);
-    const attempt = Number(this._metadataRetryCounts.get(itemID) || 0);
     if (attempt >= maxRetries) {
-      this.log(`Metadata still unavailable for item ${itemID} after ${attempt} retries; leaving it stored.`);
-      return;
+      this.log(`No collection found for attachment ${itemID} after ${attempt} retries; using the configured Unfiled folder.`);
+      this._clearCollectionRetry(itemID);
+      return false;
     }
-    this._metadataRetryCounts.set(itemID, attempt + 1);
 
+    this._collectionRetryCounts.set(itemID, attempt + 1);
     const promise = Zotero.Promise.delay(retryDelay)
-      .then(() => {
-        // If metadata became ready and _clearMetadataRetry() removed this entry,
-        // do not schedule a stale no-op retry.
-        if (!this._metadataRetries.has(itemID)) return;
-        this._metadataRetries.delete(itemID);
-        if (!this._shuttingDown) this.schedule(itemID);
+      .then(async () => {
+        // A successful earlier retry removes the entry; in that case this timer
+        // is stale and must not touch the attachment again.
+        if (!this._collectionRetries.has(itemID)) return;
+        this._collectionRetries.delete(itemID);
+        if (this._shuttingDown) return;
+        await this.processAttachment(itemID, { quietSkip: true, autoTriggered: true });
       })
       .catch(e => {
-        this._metadataRetries.delete(itemID);
-        this.error(e, `Metadata retry for item ${itemID}`);
+        this._collectionRetries.delete(itemID);
+        this.error(e, `Collection retry for attachment ${itemID}`);
       });
-    this._metadataRetries.set(itemID, promise);
+
+    this._collectionRetries.set(itemID, promise);
+    this.log(`Collection not assigned yet for attachment ${itemID}; retry ${attempt + 1}/${maxRetries} in ${retryDelay} ms.`);
+    return true;
   },
 
-  _clearMetadataRetry(itemID) {
-    this._metadataRetries.delete(itemID);
-    this._metadataRetryCounts.delete(itemID);
+  _clearCollectionRetry(itemID) {
+    this._collectionRetries.delete(itemID);
+    this._collectionRetryCounts.delete(itemID);
   },
 
   async validateBaseDirectory(baseDir = null, { testWrite = false } = {}) {
@@ -265,11 +232,14 @@ var ZoteroOneDriveOrganizer = {
   },
 
   async processAttachment(itemOrID, { quietSkip = false, autoTriggered = false } = {}) {
-    let item = typeof itemOrID === "number"
+    const item = typeof itemOrID === "number"
       ? await Zotero.Items.getAsync(itemOrID)
       : itemOrID;
 
-    if (!item) return { status: "skipped", reason: "missing-item" };
+    if (!item) {
+      if (typeof itemOrID === "number") this._clearCollectionRetry(itemOrID);
+      return { status: "skipped", reason: "missing-item" };
+    }
     const originalID = item.id;
     if (this._busy.has(originalID)) return { status: "skipped", reason: "busy" };
 
@@ -284,22 +254,6 @@ var ZoteroOneDriveOrganizer = {
       }
 
       const baseDir = await this.validateBaseDirectory();
-
-      // Automatic organization is conservative in v0.1.5: if Zotero has not
-      // attached the PDF to a regular bibliographic item yet, leave it stored
-      // and retry later. This prevents publisher/server filenames such as
-      // `cm5c00977_1.9.pdf` from becoming the permanent external filename.
-      let parent = item.parentID ? await Zotero.Items.getAsync(item.parentID) : item;
-      if (autoTriggered && this.getPref("waitForMetadata", true)) {
-        const metadata = await this._getBibliographicParent(item);
-        if (!metadata.ready) {
-          this._scheduleMetadataRetry(originalID);
-          return { status: "skipped", reason: "metadata-not-ready" };
-        }
-        parent = metadata.parent;
-        this._clearMetadataRetry(originalID);
-      }
-
       const sourcePath = await this._waitForFile(item);
       if (!sourcePath) {
         return { status: "skipped", reason: "file-not-local" };
@@ -310,12 +264,34 @@ var ZoteroOneDriveOrganizer = {
         return { status: "skipped", reason: "already-under-base" };
       }
 
-      // Re-read the parent for manual processing, or if metadata changed while
-      // we were waiting for the file to become available.
-      if (!autoTriggered || !this.getPref("waitForMetadata", true)) {
-        parent = item.parentID ? await Zotero.Items.getAsync(item.parentID) : item;
+      const parent = item.parentID ? await Zotero.Items.getAsync(item.parentID) : item;
+
+      // Zotero Connector may create the attachment before the parent item's
+      // collection assignment is visible to plugins. v0.1.4 immediately fell
+      // back to _Unfiled in that short window. For automatic organization only,
+      // defer a regular parent with no collection for a bounded period. Manual
+      // organization keeps the old immediate behavior.
+      let collectionPathOverride = null;
+      if (autoTriggered && this.getPref("includeCollectionPath", true) && parent?.isRegularItem?.()) {
+        collectionPathOverride = await this._chooseCollectionPath(parent);
+        if (!collectionPathOverride.length) {
+          if (this._scheduleCollectionRetry(originalID)) {
+            return { status: "skipped", reason: "collection-pending" };
+          }
+          // Retry budget exhausted: this is treated as a genuinely unfiled item.
+          collectionPathOverride = [];
+        }
+        else {
+          this._clearCollectionRetry(originalID);
+        }
       }
-      const destinationDir = await this._buildDestinationDirectory(baseDir, item, parent);
+
+      const destinationDir = await this._buildDestinationDirectory(
+        baseDir,
+        item,
+        parent,
+        { collectionPathOverride }
+      );
       await IOUtils.makeDirectory(destinationDir, {
         createAncestors: true,
         ignoreExisting: true
@@ -404,8 +380,7 @@ var ZoteroOneDriveOrganizer = {
         throw e;
       }
 
-      this._clearMetadataRetry(originalID);
-      await this._cacheLinkedAttachment(linkedItem, destinationPath);
+      this._clearCollectionRetry(originalID);
       this.log(`Organized item ${originalID} -> ${linkedItem.id}: ${destinationPath}`);
       return {
         status: "processed",
@@ -450,7 +425,7 @@ var ZoteroOneDriveOrganizer = {
     return false;
   },
 
-  async _buildDestinationDirectory(baseDir, attachment, parent) {
+  async _buildDestinationDirectory(baseDir, attachment, parent, { collectionPathOverride = null } = {}) {
     const segments = [baseDir];
 
     if (this.getPref("includeLibraryFolder", true)) {
@@ -459,7 +434,9 @@ var ZoteroOneDriveOrganizer = {
     }
 
     if (this.getPref("includeCollectionPath", true)) {
-      const collectionPath = await this._chooseCollectionPath(parent);
+      const collectionPath = Array.isArray(collectionPathOverride)
+        ? collectionPathOverride
+        : await this._chooseCollectionPath(parent);
       if (collectionPath.length) {
         for (const segment of collectionPath) {
           segments.push(this._sanitizeSegment(segment));
@@ -668,257 +645,6 @@ var ZoteroOneDriveOrganizer = {
     const c = PathUtils.normalize(child).replace(/\\/g, "/");
     const fold = value => Zotero.isWin ? value.toLowerCase() : value;
     return fold(c) === fold(p) || fold(c).startsWith(fold(p) + "/");
-  },
-
-  _looksLikeMachineFilename(value) {
-    let text = String(value || "").trim();
-    if (!text) return true;
-    text = text.replace(/\.pdf$/i, "");
-    if (/^(?:article|download|full[-_ ]?text|main|document|attachment|paper|untitled|pdf)(?:[._ -]*\d+)?$/i.test(text)) {
-      return true;
-    }
-    if (/^\d+(?:[._-]\d+)*$/.test(text)) return true;
-    // Publisher/manuscript identifiers such as cm5c00977_1.9 or S1234-5678...
-    // are usually compact code-like strings rather than bibliographic titles.
-    if (!/\s/.test(text) && text.length <= 48 && /^[A-Za-z0-9_.-]+$/.test(text)) {
-      const digits = (text.match(/\d/g) || []).length;
-      const letters = (text.match(/[A-Za-z]/g) || []).length;
-      if (digits >= 4 && letters <= 12) return true;
-    }
-    return false;
-  },
-
-  _isLinkedPDFAttachment(item) {
-    if (!item?.isAttachment?.() || !item.isPDFAttachment?.()) return false;
-    return item.attachmentLinkMode === Zotero.Attachments.LINK_MODE_LINKED_FILE;
-  },
-
-  async _cacheLinkedAttachment(item, knownPath = null) {
-    if (!item || !this._isLinkedPDFAttachment(item)) return false;
-    const library = Zotero.Libraries.get(item.libraryID);
-    if (!library || library.libraryType !== "user") return false;
-
-    let baseDir = String(this.getPref("baseDir", "") || "").trim();
-    if (!baseDir) return false;
-    baseDir = PathUtils.normalize(baseDir);
-
-    let path = knownPath;
-    if (!path) {
-      try { path = await item.getFilePathAsync(); } catch (_) { path = null; }
-    }
-    if (!path) return false;
-    path = PathUtils.normalize(path);
-    if (!this._pathIsInside(baseDir, path)) return false;
-
-    this._managedPathCache.set(item.id, {
-      itemID: item.id,
-      parentID: item.parentID || null,
-      path
-    });
-    return true;
-  },
-
-  async _refreshManagedCacheForIDs(ids) {
-    for (const id of ids) {
-      if (typeof id !== "number") continue;
-      let item = null;
-      try { item = await Zotero.Items.getAsync(id); } catch (_) {}
-      if (!item) continue;
-
-      if (item.isAttachment?.()) {
-        // Drop stale paths first. If the attachment is still a managed linked
-        // PDF, _cacheLinkedAttachment() immediately repopulates the entry.
-        this._managedPathCache.delete(item.id);
-      }
-
-      if (this._isLinkedPDFAttachment(item)) {
-        await this._cacheLinkedAttachment(item);
-      }
-      else if (item.isRegularItem?.()) {
-        let attachmentIDs = [];
-        try { attachmentIDs = item.getAttachments?.() || []; } catch (_) {}
-        for (const attachmentID of attachmentIDs) {
-          const attachment = await Zotero.Items.getAsync(attachmentID);
-          if (attachment && this._isLinkedPDFAttachment(attachment)) {
-            await this._cacheLinkedAttachment(attachment);
-          }
-        }
-      }
-    }
-  },
-
-  async rebuildManagedPathCache() {
-    this._managedPathCache.clear();
-    const baseDir = String(this.getPref("baseDir", "") || "").trim();
-    if (!baseDir || !(await IOUtils.exists(baseDir))) return 0;
-
-    // includeDeleted=true is intentional: an item may already be in Zotero
-    // Trash when Zotero restarts, and we still need its path if the user later
-    // chooses Delete Permanently / Empty Trash.
-    const items = await Zotero.Items.getAll(
-      Zotero.Libraries.userLibraryID,
-      false,
-      true,
-      false
-    );
-    let count = 0;
-    for (const item of items) {
-      if (await this._cacheLinkedAttachment(item)) count++;
-    }
-    this.log(`Indexed ${count} linked PDF(s) under the configured root`);
-    return count;
-  },
-
-  async _handlePermanentDelete(ids, _extraData = {}) {
-    if (this._cacheReadyPromise) {
-      try { await this._cacheReadyPromise; } catch (_) {}
-    }
-
-    const baseDirRaw = String(this.getPref("baseDir", "") || "").trim();
-    if (!baseDirRaw) return;
-    const baseDir = PathUtils.normalize(baseDirRaw);
-
-    const deletedIDs = new Set(ids.filter(id => typeof id === "number"));
-    const targets = [];
-    for (const entry of this._managedPathCache.values()) {
-      if (deletedIDs.has(entry.itemID) || (entry.parentID && deletedIDs.has(entry.parentID))) {
-        targets.push(entry);
-      }
-    }
-
-    for (const entry of targets) {
-      // Defense in depth: never delete a file outside the *current* configured
-      // root, even if it was present in an older in-memory cache.
-      if (!this._pathIsInside(baseDir, entry.path)) {
-        this.log(`Refused external delete outside configured root: ${entry.path}`);
-        this._managedPathCache.delete(entry.itemID);
-        continue;
-      }
-      try {
-        if (await IOUtils.exists(entry.path)) {
-          await IOUtils.remove(entry.path, { ignoreAbsent: true });
-          this.log(`Deleted external PDF after permanent Zotero deletion: ${entry.path}`);
-        }
-        this._managedPathCache.delete(entry.itemID);
-      }
-      catch (e) {
-        // Zotero deletion has already happened, so a filesystem failure must not
-        // cascade into any unrelated cleanup. Leave the file in place and log it.
-        this.error(e, `Could not delete external PDF ${entry.path}`);
-      }
-    }
-  },
-
-  async _checkLinkedRenameEligibility(item) {
-    if (!item?.isAttachment?.()) return { ok: false, reason: "not-attachment" };
-    if (item.deleted) return { ok: false, reason: "deleted" };
-    if (!item.isPDFAttachment?.()) return { ok: false, reason: "not-pdf" };
-    if (!this._isLinkedPDFAttachment(item)) return { ok: false, reason: "not-linked-pdf" };
-
-    const library = Zotero.Libraries.get(item.libraryID);
-    if (!library || library.libraryType !== "user") {
-      return { ok: false, reason: "group-library-linked-files-unsupported" };
-    }
-
-    const baseDir = await this.validateBaseDirectory();
-    let path = null;
-    try { path = await item.getFilePathAsync(); } catch (_) {}
-    if (!path || !(await IOUtils.exists(path))) return { ok: false, reason: "file-not-local" };
-    if (!this._pathIsInside(baseDir, path)) return { ok: false, reason: "outside-configured-root" };
-
-    const metadata = await this._getBibliographicParent(item);
-    if (!metadata.ready) return { ok: false, reason: "metadata-not-ready" };
-    return { ok: true, baseDir, path: PathUtils.normalize(path), parent: metadata.parent };
-  },
-
-  async previewRenameLinkedAttachment(itemOrID) {
-    const item = typeof itemOrID === "number"
-      ? await Zotero.Items.getAsync(itemOrID)
-      : itemOrID;
-    if (!item) return { status: "skipped", reason: "missing-item" };
-
-    const eligibility = await this._checkLinkedRenameEligibility(item);
-    if (!eligibility.ok) {
-      return { status: "skipped", reason: eligibility.reason, itemID: item.id };
-    }
-
-    const currentPath = eligibility.path;
-    const directory = PathUtils.parent(currentPath);
-    const desiredName = await this._buildFilename(item, eligibility.parent, currentPath);
-    let desiredPath = PathUtils.join(directory, desiredName);
-    if (this._samePath(currentPath, desiredPath)) {
-      return { status: "skipped", reason: "already-named", itemID: item.id };
-    }
-    if (await IOUtils.exists(desiredPath)) {
-      desiredPath = await this._uniquePath(directory, desiredName);
-    }
-
-    return {
-      status: "preview",
-      itemID: item.id,
-      title: this._getTitle(eligibility.parent),
-      currentPath,
-      destinationPath: desiredPath
-    };
-  },
-
-  async renameLinkedAttachment(itemOrID) {
-    const item = typeof itemOrID === "number"
-      ? await Zotero.Items.getAsync(itemOrID)
-      : itemOrID;
-    if (!item) return { status: "skipped", reason: "missing-item" };
-
-    const eligibility = await this._checkLinkedRenameEligibility(item);
-    if (!eligibility.ok) return { status: "skipped", reason: eligibility.reason };
-
-    const currentPath = eligibility.path;
-    const directory = PathUtils.parent(currentPath);
-    const desiredName = await this._buildFilename(item, eligibility.parent, currentPath);
-    let destinationPath = PathUtils.join(directory, desiredName);
-    if (this._samePath(currentPath, destinationPath)) {
-      return { status: "skipped", reason: "already-named" };
-    }
-    if (await IOUtils.exists(destinationPath)) {
-      destinationPath = await this._uniquePath(directory, desiredName);
-    }
-
-    const oldAttachmentPath = item.attachmentPath;
-    const before = await IOUtils.stat(currentPath);
-    await IOUtils.move(currentPath, destinationPath);
-
-    try {
-      const after = await IOUtils.stat(destinationPath);
-      if (before.size !== after.size) {
-        throw new Error(`Rename verification failed (${before.size} != ${after.size} bytes)`);
-      }
-      await Zotero.DB.executeTransaction(async () => {
-        item.attachmentPath = this._prepareLinkedPath(destinationPath, eligibility.baseDir);
-        await item.save();
-      });
-    }
-    catch (e) {
-      try {
-        if (await IOUtils.exists(destinationPath) && !(await IOUtils.exists(currentPath))) {
-          await IOUtils.move(destinationPath, currentPath);
-        }
-      }
-      catch (rollbackError) {
-        this.error(rollbackError, `Could not roll back filename change for item ${item.id}`);
-      }
-      try { item.attachmentPath = oldAttachmentPath; } catch (_) {}
-      throw e;
-    }
-
-    await this._cacheLinkedAttachment(item, destinationPath);
-    this.log(`Renamed linked PDF ${currentPath} -> ${destinationPath}`);
-    return { status: "renamed", itemID: item.id, currentPath, destinationPath };
-  },
-
-  _samePath(a, b) {
-    const normalize = value => PathUtils.normalize(value).replace(/\\/g, "/");
-    const left = normalize(a);
-    const right = normalize(b);
-    return Zotero.isWin ? left.toLowerCase() === right.toLowerCase() : left === right;
   },
 
   async countEligible() {

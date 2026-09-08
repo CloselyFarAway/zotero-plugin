@@ -34,13 +34,6 @@ Keep changes focused and preserve the safety ordering for stored → linked conv
 4. Transfer Zotero metadata/children/index state
 5. Delete the old stored attachment last
 
-For v0.1.5+ file-destructive features:
-
-- External deletion must stay opt-in and must never run on a normal Trash move.
-- External deletion must be restricted to the configured root.
-- Linked-file renaming must update Zotero only after the filesystem rename succeeds and must attempt rollback on DB failure.
-- Version upgrades must not silently rename, relocate, or delete existing linked files.
-
 Run:
 
 ```bash
@@ -58,4 +51,4 @@ The permanent plugin ID is:
 zotero-onedrive-organizer@closelyfaraway.github.io
 ```
 
-Do not change it. Release tags should match `manifest.json`, e.g. manifest `0.1.5` → tag `v0.1.5`.
+Do not change it. Release tags should match `manifest.json`, e.g. manifest `0.1.6` → tag `v0.1.6`.
