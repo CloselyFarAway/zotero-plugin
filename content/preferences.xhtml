@@ -1,0 +1,60 @@
+<vbox xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+      xmlns:html="http://www.w3.org/1999/xhtml"
+      onload="ZoteroOneDriveOrganizerPrefs.init()">
+  <groupbox>
+    <label><html:h2>Zotero OneDrive Organizer</html:h2></label>
+    <description>
+      Move stored PDFs from My Library into a OneDrive/external folder and keep them in Zotero as linked files.
+    </description>
+
+    <checkbox id="zoo-auto-enabled"
+              label="Automatically organize newly added stored PDFs" />
+
+    <separator class="thin" />
+
+    <label value="OneDrive / external root folder" />
+    <hbox align="center">
+      <html:input id="zoo-base-dir" type="text" style="min-width: 36em; flex: 1;" />
+      <button id="zoo-browse" label="Browse…" oncommand="ZoteroOneDriveOrganizerPrefs.chooseBaseDir()" />
+    </hbox>
+
+    <separator class="thin" />
+
+    <checkbox id="zoo-library-folder" label="Include library folder (for example: My Library)" />
+    <checkbox id="zoo-collection-path" label="Mirror collection/subcollection path" />
+    <checkbox id="zoo-year-folder" label="Add publication year as a folder" />
+
+    <hbox align="center">
+      <label value="Folder name for items not in a collection:" />
+      <html:input id="zoo-unfiled" type="text" style="width: 14em;" />
+    </hbox>
+
+    <separator class="thin" />
+
+    <label value="Filename template" />
+    <html:input id="zoo-template" type="text" style="min-width: 36em;" />
+    <description>
+      Tokens: {firstCreator}, {year}, {title}, {itemKey}, {attachmentKey}
+    </description>
+
+    <checkbox id="zoo-relative-paths"
+              label="Use Zotero relative linked-file paths when safe (useful across multiple computers)" />
+    <description>
+      This will set Zotero's linked-attachment base directory only if no conflicting base directory already exists.
+    </description>
+
+    <separator />
+
+    <hbox align="center">
+      <button id="zoo-organize-existing"
+              label="Organize existing PDFs now"
+              oncommand="ZoteroOneDriveOrganizerPrefs.organizeExisting()" />
+      <label id="zoo-status" value="" style="margin-left: 1em;" />
+    </hbox>
+
+    <separator class="thin" />
+    <description style="color: var(--fill-quinary);">
+      Important: Zotero linked files are supported only in My Library, not Group Libraries. This plugin skips Group Library attachments.
+    </description>
+  </groupbox>
+</vbox>

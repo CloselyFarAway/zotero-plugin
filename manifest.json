@@ -1,0 +1,13 @@
+{
+  "manifest_version": 2,
+  "name": "Zotero OneDrive Organizer",
+  "version": "0.1.0",
+  "description": "Moves stored PDF attachments from My Library into a OneDrive/external folder organized by Zotero collection, then converts them to linked files.",
+  "applications": {
+    "zotero": {
+      "id": "onedrive-organizer@zotero.local",
+      "strict_min_version": "10.0",
+      "strict_max_version": "10.0.*"
+    }
+  }
+}

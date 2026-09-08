@@ -1,0 +1,9 @@
+pref("extensions.zotero-onedrive-organizer.autoEnabled", true);
+pref("extensions.zotero-onedrive-organizer.baseDir", "");
+pref("extensions.zotero-onedrive-organizer.includeLibraryFolder", true);
+pref("extensions.zotero-onedrive-organizer.includeCollectionPath", true);
+pref("extensions.zotero-onedrive-organizer.includeYearFolder", false);
+pref("extensions.zotero-onedrive-organizer.unfiledFolder", "_Unfiled");
+pref("extensions.zotero-onedrive-organizer.filenameTemplate", "{firstCreator}_{year}_{title}");
+pref("extensions.zotero-onedrive-organizer.useRelativePaths", false);
+pref("extensions.zotero-onedrive-organizer.processDelayMs", 2500);
