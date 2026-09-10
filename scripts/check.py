@@ -38,6 +38,10 @@ for rel in required_source:
     if not (ROOT / rel).exists():
         fail(f"Missing source file: {rel}")
 
+for bad in list(ROOT.rglob("__pycache__")) + list(ROOT.rglob("*.pyc")) + list(ROOT.rglob("*.pyo")):
+    if "dist" not in bad.parts:
+        fail(f"Python cache artifact should not be committed: {bad.relative_to(ROOT)}")
+
 xpi = ROOT / "dist" / f"zotero-onedrive-organizer-{version}.xpi"
 if not xpi.exists():
     fail(f"Missing build artifact: {xpi.name} (run python scripts/build.py)")

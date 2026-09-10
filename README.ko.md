@@ -4,9 +4,7 @@
 
 Zotero 10의 **My Library에 저장된 PDF**를 OneDrive 또는 다른 로컬/동기화 폴더로 옮기고, Zotero 안에서는 해당 PDF를 **linked-file attachment**로 계속 사용할 수 있게 해주는 플러그인입니다. Zotero의 Collection/Subcollection 구조도 실제 폴더 구조에 반영할 수 있습니다.
 
-> 현재 버전: **v0.1.7**. **v0.1.5에서 실험적으로 추가했던 metadata 대기/rename/삭제 동기화 기능은 회귀 문제가 있어 v0.1.6에서 전부 제거했습니다.** v0.1.6은 실제로 안정적이었던 v0.1.4 기능을 기준으로, 자동 import 시 collection 배정이 늦어 PDF가 `_Unfiled`로 들어가던 타이밍 문제만 수정한 버전입니다. 처음 대량 이동하기 전에는 Zotero 데이터와 중요한 PDF를 백업하는 것을 권장합니다.
-
-v0.1.7은 v0.1.6의 collection 배정 재시도 로직을 유지하면서, 실제 파일 이동 경로만 강화한 hardening release입니다. `noOverwrite` 복사, SHA-256 검증, Windows 전체 경로 길이 보호, note-link 이전 실패 시 rollback, 필수 API capability check를 추가했습니다. v0.1.5의 metadata/rename/delete-sync 실험 기능은 다시 넣지 않았습니다.
+> 현재 버전: **v0.1.8**. **v0.1.5에서 실험적으로 추가했던 metadata 대기/rename/삭제 동기화 기능은 회귀 문제 때문에 계속 제외되어 있습니다.** v0.1.8은 v0.1.6의 collection 배정 재시도와 v0.1.7의 `noOverwrite`/SHA-256/경로 길이/capability hardening을 유지하면서, linked attachment 변환을 먼저 DB에 commit한 뒤 기존 stored attachment를 별도 transaction에서 정리하도록 바꿨습니다. 기존 파일 정리에 실패해도 검증된 외부 PDF를 지우지 않으며, bulk migration은 PDF 사이에서 안전하게 취소할 수 있습니다. 처음 대량 이동하기 전에는 Zotero 데이터와 중요한 PDF를 백업하는 것을 권장합니다.
 
 ## 다운로드 및 설치
 

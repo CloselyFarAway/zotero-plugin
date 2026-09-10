@@ -40,6 +40,7 @@ function makeContext() {
         unregisterObserver: () => {},
       },
       DB: { executeTransaction: async fn => fn() },
+      Item: function Item() {},
       Items: {
         moveChildItems: async () => {},
         getAsync: async () => null,
@@ -61,6 +62,7 @@ function makeContext() {
     },
     Services: { prompt: { alert: () => {} } },
   };
+  context.Zotero.Item.prototype.eraseTx = async () => true;
   vm.createContext(context);
   const source = fs.readFileSync(path.join(__dirname, '..', 'organizer.js'), 'utf8');
   vm.runInContext(source, context, { filename: 'organizer.js' });
@@ -188,7 +190,7 @@ async function testNoteFailureDoesNotEraseOriginal() {
     parentItem: parent,
     dateAdded: '2026-09-10 00:00:00',
     clone: () => linkedItem,
-    erase: async () => { erased = true; },
+    eraseTx: async () => { erased = true; },
   };
   const note = { save: async () => {} };
 
@@ -208,6 +210,92 @@ async function testNoteFailureDoesNotEraseOriginal() {
   assert.equal(organizer._busy.has(item.id), false, 'busy lock must be released');
 }
 
+
+async function testCleanupFailureKeepsVerifiedExternalCopy() {
+  const { context, organizer } = makeContext();
+  organizer._capabilitiesOK = true;
+  organizer._capabilityFailures = [];
+  organizer._checkEligibility = async () => ({ ok: true });
+  organizer.validateBaseDirectory = async () => 'D:\\Base';
+  organizer._waitForFile = async () => 'C:\\Zotero\\storage\\paper.pdf';
+  organizer._pathIsInside = () => false;
+  organizer._buildDestinationDirectory = async () => 'D:\\Base\\My Library\\Test';
+  organizer._buildFilename = async () => 'paper.pdf';
+  organizer._copyToUniqueDestination = async () => 'D:\\Base\\My Library\\Test\\paper.pdf';
+  organizer._verifyCopiedFile = async () => ({ sourceStat: { size: 100, lastModified: 0 } });
+  organizer._prepareLinkedPath = p => p;
+  organizer.getPref = (name, fallback) => fallback;
+
+  let externalRemoved = false;
+  let linkedSaved = false;
+  const parent = {
+    id: 2,
+    isRegularItem: () => true,
+    getNotes: () => [],
+  };
+  const linkedItem = {
+    id: 3,
+    key: 'NEWKEY',
+    save: async () => { linkedSaved = true; },
+    attachmentLinkMode: null,
+    attachmentPath: null,
+    dateAdded: null,
+  };
+  const item = {
+    id: 1,
+    key: 'OLDKEY',
+    parentID: 2,
+    parentItem: parent,
+    dateAdded: '2026-09-10 00:00:00',
+    clone: () => linkedItem,
+    eraseTx: async () => { throw new Error('erase failed after conversion commit'); },
+  };
+
+  context.Zotero.Items.getAsync = async id => id === 2 ? parent : item;
+  context.Zotero.Items.get = () => [];
+  context.IOUtils.remove = async () => { externalRemoved = true; };
+
+  const result = await organizer.processAttachment(item, { quietSkip: true, autoTriggered: false });
+  assert.equal(result.status, 'processed-with-warning');
+  assert.equal(result.warning, 'old-item-cleanup-failed');
+  assert.equal(linkedSaved, true, 'linked item must be committed before cleanup');
+  assert.equal(externalRemoved, false, 'verified external PDF must survive old-item cleanup failure');
+  assert.equal(organizer._busy.has(item.id), false, 'busy lock must be released');
+}
+
+async function testBusyReservedBeforeAsyncLoad() {
+  const { context, organizer } = makeContext();
+  organizer._capabilitiesOK = true;
+  organizer._capabilityFailures = [];
+
+  let resolveLoad;
+  context.Zotero.Items.getAsync = () => new Promise(resolve => { resolveLoad = resolve; });
+
+  const first = organizer.processAttachment(77, { quietSkip: true });
+  assert.equal(organizer._busy.has(77), true, 'ID must be reserved before awaiting item load');
+  const second = await organizer.processAttachment(77, { quietSkip: true });
+  assert.equal(second.reason, 'busy');
+
+  resolveLoad(null);
+  const firstResult = await first;
+  assert.equal(firstResult.reason, 'missing-item');
+  assert.equal(organizer._busy.has(77), false);
+}
+
+async function testScheduleDoesNotDuplicateCollectionRetry() {
+  const { organizer } = makeContext();
+  organizer._collectionRetries.set(88, Promise.resolve());
+  organizer.schedule(88);
+  assert.equal(organizer._pending.has(88), false, 'regular scheduler must not overlap collection retry timer');
+}
+
+async function testBulkCancelRequest() {
+  const { organizer } = makeContext();
+  assert.equal(organizer.requestBulkCancel(), false, 'cancel should be ignored when no bulk run is active');
+  organizer._bulkRunning = true;
+  assert.equal(organizer.requestBulkCancel(), true);
+  assert.equal(organizer._bulkCancelRequested, true);
+}
 (async () => {
   await testCapabilities();
   await testPathLengthGuard();
@@ -215,6 +303,10 @@ async function testNoteFailureDoesNotEraseOriginal() {
   await testNonCollisionCopyFailureAborts();
   await testSha256Verification();
   await testNoteFailureDoesNotEraseOriginal();
+  await testCleanupFailureKeepsVerifiedExternalCopy();
+  await testBusyReservedBeforeAsyncLoad();
+  await testScheduleDoesNotDuplicateCollectionRetry();
+  await testBulkCancelRequest();
   console.log('OK: organizer regression tests passed');
 })().catch(err => {
   console.error(err);

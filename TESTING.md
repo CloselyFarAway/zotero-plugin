@@ -1,16 +1,16 @@
 # Zotero 10 Manual Test Checklist
 
-Target release: **v0.1.7**  
+Target release: **v0.1.8**  
 Primary confirmed environment: **Zotero 10.0.4 / Windows**
 
 Use a disposable Zotero item and an empty OneDrive test directory first.
 
 ## Installation and settings
 
-- [ ] Zotero accepts `zotero-onedrive-organizer-0.1.7.xpi`.
+- [ ] Zotero accepts `zotero-onedrive-organizer-0.1.8.xpi`.
 - [ ] The plugin appears enabled under Tools → Plugins.
 - [ ] Settings → OneDrive Organizer opens without an error.
-- [ ] The settings pane shows `v0.1.7`.
+- [ ] The settings pane shows `v0.1.8`.
 - [ ] Project page opens the GitHub repository.
 - [ ] Report a bug / request a feature opens GitHub Issues.
 
@@ -50,6 +50,8 @@ Create a temporary collection such as `Plugin Test/Subcollection`, then add one 
 
 - [ ] `Organize ALL existing PDFs…` displays the number of eligible PDFs and requires confirmation.
 - [ ] Canceling the confirmation leaves the library unchanged.
+- [ ] During a disposable multi-PDF bulk run, **Cancel bulk** stops before the next PDF after the current PDF finishes.
+- [ ] A forced old-item cleanup failure leaves the new linked attachment and verified external PDF intact and reports a cleanup warning.
 
 ## Automatic test
 

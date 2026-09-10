@@ -9,7 +9,7 @@
 
 A Zotero 10 plugin that moves **stored PDF attachments** from **My Library** to OneDrive (or any normal local/synced folder), mirrors your Zotero collection hierarchy, and keeps the PDFs in Zotero as **linked-file attachments**.
 
-> Current version: **v0.1.7**. **v0.1.5 remains withdrawn**; its experimental metadata/rename/delete-sync features are not present. v0.1.7 keeps the stable v0.1.6 collection-assignment retry and hardens the destructive file-move path with no-overwrite copying, SHA-256 verification, whole-path length checks, fatal note-link rollback, and runtime capability checks. Back up important Zotero data before a large first-time migration.
+> Current version: **v0.1.8**. **v0.1.5 remains withdrawn**; its experimental metadata/rename/delete-sync features are not present. v0.1.8 keeps the stable v0.1.6 collection retry and v0.1.7 copy-integrity hardening, then separates Zotero conversion from old stored-file cleanup so a cleanup failure leaves the verified external copy intact. Bulk migration can now be cancelled safely between PDFs. Back up important Zotero data before a large first-time migration.
 
 ## Download
 
@@ -28,7 +28,7 @@ This plugin automates the tedious part: moving PDFs out of Zotero-managed storag
 1. Install the `.xpi` and restart Zotero if requested.
 2. Open **Settings → OneDrive Organizer**.
 3. Click **Browse…** and choose a dedicated folder such as `D:\OneDrive\Zotero_PDF`.
-4. Click **Check folder**. v0.1.7 verifies both access **and write permission**.
+4. Click **Check folder**. v0.1.8 verifies both access **and write permission**.
 5. Keep automatic organization **off** for the first test.
 6. Select one test paper in Zotero and click **Preview selected path(s)…**. Nothing is moved during preview.
 7. If the destination looks correct, click **Organize selected item(s)**.
@@ -71,7 +71,7 @@ D:\OneDrive\Zotero_PDF\
 - Automatic organization of newly added stored PDFs (opt-in)
 - Safe organization of only the currently selected item(s)
 - **Destination preview** before moving anything
-- Bulk migration with an explicit eligible-file count and confirmation
+- Bulk migration with an explicit eligible-file count, confirmation, and cooperative **Cancel bulk** control
 - Zotero collection/subcollection hierarchy mirroring
 - Optional publication-year folder
 - Custom filename template
@@ -81,6 +81,7 @@ D:\OneDrive\Zotero_PDF\
 - SHA-256 source/destination verification before the stored Zotero attachment can be erased
 - Conservative whole-path length guard on Windows
 - Runtime capability check that blocks file-moving operations if required Zotero/Firefox APIs are unavailable
+- Two-phase conversion: commit the linked attachment first, then clean up the old stored attachment in a separate transaction
 - Group Library protection: unsupported linked-file attachments are skipped
 
 ## Filename template
@@ -103,7 +104,7 @@ The `.pdf` extension is added automatically.
 
 ## Automatic collection timing
 
-During a Zotero Connector import, the PDF attachment can appear a moment before Zotero finishes assigning the parent item to the currently selected collection. v0.1.7 retains the v0.1.6 conservative behavior:
+During a Zotero Connector import, the PDF attachment can appear a moment before Zotero finishes assigning the parent item to the currently selected collection. v0.1.8 retains the v0.1.6 conservative behavior:
 
 1. Automatic organization checks the parent item's collection membership.
 2. If no collection is visible yet, the PDF remains in Zotero storage temporarily.
@@ -132,16 +133,16 @@ copy to a unique external path with no-overwrite protection
       ↓
 verify copied byte size + SHA-256
       ↓
-create linked attachment
+DB transaction: create linked attachment + migrate annotations / relations / notes
       ↓
-transfer annotations / relations / full-text index / note attachment keys
+COMMIT linked conversion
       ↓
-erase old stored attachment as the final database operation
+separate erase transaction for the old stored attachment
 ```
 
-If copying, SHA-256 verification, note-link migration, or Zotero database conversion fails, the original stored attachment is retained and the newly copied external file is removed when possible.
+If copying, SHA-256 verification, note-link migration, or the linked-item conversion transaction fails, the original stored attachment is retained and the newly copied external file is removed when possible. **After the linked conversion commits, the verified external PDF is never removed merely because cleanup of the old stored attachment fails.** In that rare case the plugin reports a cleanup warning and prefers a duplicate/stale old attachment over risking data loss.
 
-Automatic organization is **off by default**. v0.1.7 also performs a startup capability check; if required file/database APIs are missing, automatic organization is not registered for that runtime session and file-moving operations are blocked.
+Automatic organization is **off by default**. v0.1.8 also performs a startup capability check; if required file/database APIs are missing, automatic organization is not registered for that runtime session and file-moving operations are blocked.
 
 ## Important limitations
 
@@ -179,7 +180,7 @@ This project is not affiliated with Zotero, the Corporation for Digital Scholars
 ## Troubleshooting
 
 **Browse works but organization fails**  
-Run **Check folder** first. v0.1.7 creates and deletes a tiny temporary file to verify actual write access.
+Run **Check folder** first. v0.1.8 creates and deletes a tiny temporary file to verify actual write access.
 
 **Nothing happens to a selected attachment**  
 The plugin only processes stored PDF attachments in My Library. Already-linked files, non-PDFs, and Group Library attachments are skipped.
@@ -204,8 +205,8 @@ python scripts/check.py
 Output:
 
 ```text
-dist/zotero-onedrive-organizer-0.1.7.xpi
-dist/zotero-onedrive-organizer-0.1.7.xpi.sha256
+dist/zotero-onedrive-organizer-0.1.8.xpi
+dist/zotero-onedrive-organizer-0.1.8.xpi.sha256
 ```
 
 The public extension ID is permanent:
@@ -231,6 +232,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [TESTING.md](TESTING.md) for developm
 - [x] SHA-256 copy verification
 - [x] Windows whole-path length guard
 - [x] Regression-test harness
+- [x] Two-phase conversion / old-item cleanup
+- [x] Cooperative bulk cancellation
 - [ ] Relocate existing linked files when collection paths change
 - [ ] Restore linked PDFs back into Zotero-managed storage
 - [ ] Support additional attachment types

@@ -11,7 +11,7 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
       "zoo-auto-enabled", "zoo-base-dir", "zoo-browse", "zoo-check-folder",
       "zoo-library-folder", "zoo-collection-path", "zoo-year-folder",
       "zoo-unfiled", "zoo-template", "zoo-relative-paths",
-      "zoo-preview-selected", "zoo-organize-selected", "zoo-organize-existing",
+      "zoo-preview-selected", "zoo-organize-selected", "zoo-organize-existing", "zoo-cancel-existing",
       "zoo-project-page", "zoo-report-issue", "zoo-version", "zoo-status"
     ];
     if (!required.every(id => document.getElementById(id))) return false;
@@ -40,13 +40,15 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
       .addEventListener("command", () => this.organizeSelected());
     document.getElementById("zoo-organize-existing")
       .addEventListener("command", () => this.organizeExisting());
+    document.getElementById("zoo-cancel-existing")
+      .addEventListener("command", () => this.cancelExisting());
     document.getElementById("zoo-project-page")
       .addEventListener("command", () => Zotero.launchURL("https://github.com/CloselyFarAway/zotero-plugin"));
     document.getElementById("zoo-report-issue")
       .addEventListener("command", () => Zotero.launchURL("https://github.com/CloselyFarAway/zotero-plugin/issues/new/choose"));
 
     const versionLabel = document.getElementById("zoo-version");
-    if (versionLabel) versionLabel.value = `v${this.organizer?.version || "0.1.7"}`;
+    if (versionLabel) versionLabel.value = `v${this.organizer?.version || "0.1.8"}`;
     const runtimeStatus = this.organizer?.getRuntimeStatus?.();
     if (runtimeStatus && !runtimeStatus.ok) {
       this._setStatus(`Compatibility check failed — missing: ${runtimeStatus.missing.join(", ")}`);
@@ -251,11 +253,16 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
         return;
       }
 
-      const stats = { processed: 0, skipped: 0, failed: 0, failures: [] };
+      const stats = { processed: 0, warnings: 0, skipped: 0, failed: 0, failures: [] };
       for (let i = 0; i < attachmentIDs.length; i++) {
         try {
           const result = await this.organizer.processAttachment(attachmentIDs[i], { quietSkip: true });
           if (result.status === "processed") stats.processed++;
+          else if (result.status === "processed-with-warning") {
+            stats.processed++;
+            stats.warnings++;
+            stats.failures.push(`Cleanup warning for item ${attachmentIDs[i]}: ${result.warningMessage || result.warning}`);
+          }
           else stats.skipped++;
         }
         catch (e) {
@@ -263,13 +270,13 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
           stats.failures.push(String(e));
           Zotero.logError(e);
         }
-        this._setStatus(`${i + 1}/${attachmentIDs.length} — moved ${stats.processed}, skipped ${stats.skipped}, failed ${stats.failed}`);
+        this._setStatus(`${i + 1}/${attachmentIDs.length} — moved ${stats.processed}, warnings ${stats.warnings}, skipped ${stats.skipped}, failed ${stats.failed}`);
       }
 
       const detail = stats.failures.length ? `\n\nFirst error: ${stats.failures[0]}` : "";
       this._alert(
         "OneDrive Organizer",
-        `Selected-item test finished.\n\nProcessed: ${stats.processed}\nSkipped: ${stats.skipped}\nFailed: ${stats.failed}${detail}`
+        `Selected-item test finished.\n\nProcessed: ${stats.processed}\nCleanup warnings: ${stats.warnings}\nSkipped: ${stats.skipped}\nFailed: ${stats.failed}${detail}`
       );
     }
     catch (e) {
@@ -282,9 +289,19 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
     }
   },
 
+  cancelExisting() {
+    const requested = this.organizer?.requestBulkCancel?.();
+    if (requested) {
+      document.getElementById("zoo-cancel-existing").disabled = true;
+      this._setStatus("Cancel requested — finishing the current PDF safely…");
+    }
+  },
+
   async organizeExisting() {
     const button = document.getElementById("zoo-organize-existing");
+    const cancelButton = document.getElementById("zoo-cancel-existing");
     button.disabled = true;
+    cancelButton.disabled = true;
     try {
       const typed = String(document.getElementById("zoo-base-dir").value || "").trim();
       this._set("baseDir", typed);
@@ -297,23 +314,29 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
       const confirmed = Services.prompt.confirm(
         window,
         "OneDrive Organizer — bulk migration",
-        `This will attempt to reorganize ${eligible} stored PDF(s) across My Library.\n\nContinue only after a successful selected-item test and a backup.`
+        `This will attempt to reorganize ${eligible} stored PDF(s) across My Library.\n\nContinue only after a successful selected-item test and a backup. You can cancel between PDFs.`
       );
       if (!confirmed) return;
 
+      cancelButton.disabled = false;
       this._setStatus("Scanning…");
       const stats = await this.organizer.organizeExisting({
         progress: ({ current, total, stats }) => {
-          this._setStatus(`${current}/${total} — moved ${stats.processed}, failed ${stats.failed}`);
+          this._setStatus(`${current}/${total} — moved ${stats.processed}, warnings ${stats.warnings}, failed ${stats.failed}`);
         }
       });
 
       const detail = stats.failures.length ? `\n\nFirst error: ${stats.failures[0].message}` : "";
+      const heading = stats.cancelled ? "Cancelled safely." : "Finished.";
       this._alert(
         "OneDrive Organizer",
-        `Finished.\n\nProcessed: ${stats.processed}\nSkipped: ${stats.skipped}\nFailed: ${stats.failed}${detail}`
+        `${heading}\n\nProcessed: ${stats.processed}\nCleanup warnings: ${stats.warnings}\nSkipped: ${stats.skipped}\nFailed: ${stats.failed}${detail}`
       );
-      this._setStatus(`Done — moved ${stats.processed}, failed ${stats.failed}`);
+      this._setStatus(
+        stats.cancelled
+          ? `Cancelled — moved ${stats.processed}, warnings ${stats.warnings}, failed ${stats.failed}`
+          : `Done — moved ${stats.processed}, warnings ${stats.warnings}, failed ${stats.failed}`
+      );
     }
     catch (e) {
       Zotero.logError(e);
@@ -322,6 +345,7 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
     }
     finally {
       button.disabled = false;
+      cancelButton.disabled = true;
     }
   },
 

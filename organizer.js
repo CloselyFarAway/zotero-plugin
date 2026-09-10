@@ -1,15 +1,17 @@
 /*
  * Zotero OneDrive Organizer
- * v0.1.7
+ * v0.1.8
  *
  * Safety model:
  *   1. Copy with no-overwrite semantics to a unique external path.
  *   2. Verify byte size and SHA-256 before any Zotero attachment is erased.
- *   3. Create a linked attachment clone and transfer annotations/relations/full-text.
- *   4. Treat note-link migration failure as fatal and roll back the DB transaction.
- *   5. Erase the old stored attachment only as the final DB operation.
+ *   3. Commit the linked-attachment conversion and metadata migration in a DB transaction.
+ *   4. Only after that transaction commits, erase the old stored attachment in a separate transaction.
+ *   5. If old-item cleanup fails, keep the verified external copy and linked item; prefer a duplicate/warning over data loss.
  *
- * If conversion fails, the external copy is removed and the original stored item remains.
+ * If the conversion transaction fails, the external copy is removed and the original
+ * stored item remains. Once conversion commits, the external copy is never removed
+ * merely because old-item cleanup fails.
  */
 
 var ZoteroOneDriveOrganizer = {
@@ -22,12 +24,16 @@ var ZoteroOneDriveOrganizer = {
   _shuttingDown: false,
   _capabilitiesOK: false,
   _capabilityFailures: [],
+  _bulkRunning: false,
+  _bulkCancelRequested: false,
 
   async init({ id, version, rootURI }) {
     this.id = id;
     this.version = version;
     this.rootURI = rootURI;
     this._shuttingDown = false;
+    this._bulkRunning = false;
+    this._bulkCancelRequested = false;
 
     const capabilityResult = this._checkCapabilities();
     this._capabilitiesOK = capabilityResult.ok;
@@ -58,6 +64,8 @@ var ZoteroOneDriveOrganizer = {
 
   shutdown() {
     this._shuttingDown = true;
+    this._bulkCancelRequested = true;
+    this._bulkRunning = false;
     if (this._observerID) {
       Zotero.Notifier.unregisterObserver(this._observerID);
       this._observerID = null;
@@ -100,6 +108,7 @@ var ZoteroOneDriveOrganizer = {
       ["Zotero.Libraries.get", () => typeof Zotero.Libraries?.get === "function"],
       ["Zotero.File.getValidFileName", () => typeof Zotero.File?.getValidFileName === "function"],
       ["Zotero.Attachments.LINK_MODE_LINKED_FILE", () => typeof Zotero.Attachments?.LINK_MODE_LINKED_FILE === "number"],
+      ["Zotero.Item.prototype.eraseTx", () => typeof Zotero.Item?.prototype?.eraseTx === "function"],
     ];
 
     const missing = [];
@@ -144,6 +153,23 @@ var ZoteroOneDriveOrganizer = {
     });
   },
 
+  _notifyCleanupFailure(originalID, destinationPath, error) {
+    Zotero.Promise.delay(0).then(() => {
+      try {
+        Services.prompt.alert(
+          Zotero.getMainWindow?.() || null,
+          "Zotero OneDrive Organizer — cleanup warning",
+          `The linked PDF was created and verified, but Zotero could not fully remove the old stored attachment (${originalID}).\n\n` +
+          `The external PDF was kept for safety:\n${destinationPath}\n\n` +
+          `No automatic rollback was attempted because that could risk deleting the good copy. Check Zotero for a duplicate or missing old attachment before retrying.\n\n${error}`
+        );
+      }
+      catch (e) {
+        this.error(e, "Could not show cleanup warning");
+      }
+    });
+  },
+
   getPref(name, fallback = null) {
     const value = Zotero.Prefs.get(this.PREF + name);
     return value === undefined || value === null ? fallback : value;
@@ -173,7 +199,7 @@ var ZoteroOneDriveOrganizer = {
   },
 
   schedule(itemID) {
-    if (this._pending.has(itemID) || this._busy.has(itemID)) return;
+    if (this._pending.has(itemID) || this._busy.has(itemID) || this._collectionRetries.has(itemID)) return;
 
     const delay = Math.max(500, Number(this.getPref("processDelayMs", 2500)) || 2500);
     const promise = Zotero.Promise.delay(delay)
@@ -317,22 +343,29 @@ var ZoteroOneDriveOrganizer = {
   },
 
   async processAttachment(itemOrID, { quietSkip = false, autoTriggered = false } = {}) {
-    const item = typeof itemOrID === "number"
-      ? await Zotero.Items.getAsync(itemOrID)
-      : itemOrID;
-
-    if (!item) {
-      if (typeof itemOrID === "number") this._clearCollectionRetry(itemOrID);
-      return { status: "skipped", reason: "missing-item" };
-    }
-    const originalID = item.id;
+    // Reserve the attachment ID before the first await. The old v0.1.7 code was
+    // already safe under JavaScript's single-threaded event loop because has/add
+    // were adjacent, but early reservation avoids duplicate async loads and makes
+    // the mutual-exclusion boundary explicit.
+    const originalID = typeof itemOrID === "number" ? itemOrID : itemOrID?.id;
+    if (!originalID) return { status: "skipped", reason: "missing-item" };
     if (this._busy.has(originalID)) return { status: "skipped", reason: "busy" };
 
-    this._assertCapabilities();
     this._busy.add(originalID);
     try {
+      this._assertCapabilities();
+      const item = typeof itemOrID === "number"
+        ? await Zotero.Items.getAsync(originalID)
+        : itemOrID;
+
+      if (!item || item.id !== originalID) {
+        this._clearCollectionRetry(originalID);
+        return { status: "skipped", reason: "missing-item" };
+      }
+
       const eligibility = await this._checkEligibility(item);
       if (!eligibility.ok) {
+        this._clearCollectionRetry(originalID);
         if (!quietSkip && eligibility.reason !== "not-stored-pdf") {
           this.log(`Skipped ${originalID}: ${eligibility.reason}`);
         }
@@ -353,10 +386,8 @@ var ZoteroOneDriveOrganizer = {
       const parent = item.parentID ? await Zotero.Items.getAsync(item.parentID) : item;
 
       // Zotero Connector may create the attachment before the parent item's
-      // collection assignment is visible to plugins. v0.1.4 immediately fell
-      // back to _Unfiled in that short window. For automatic organization only,
-      // defer a regular parent with no collection for a bounded period. Manual
-      // organization keeps the old immediate behavior.
+      // collection assignment is visible to plugins. For automatic organization
+      // only, defer a regular parent with no collection for a bounded period.
       let collectionPathOverride = null;
       if (autoTriggered && this.getPref("includeCollectionPath", true) && parent?.isRegularItem?.()) {
         collectionPathOverride = await this._chooseCollectionPath(parent);
@@ -364,7 +395,6 @@ var ZoteroOneDriveOrganizer = {
           if (this._scheduleCollectionRetry(originalID)) {
             return { status: "skipped", reason: "collection-pending" };
           }
-          // Retry budget exhausted: this is treated as a genuinely unfiled item.
           collectionPathOverride = [];
         }
         else {
@@ -386,6 +416,7 @@ var ZoteroOneDriveOrganizer = {
       const destinationName = await this._buildFilename(item, parent, sourcePath);
       let destinationPath = null;
       let linkedItem = null;
+      let conversionCommitted = false;
 
       try {
         destinationPath = await this._copyToUniqueDestination(
@@ -408,17 +439,21 @@ var ZoteroOneDriveOrganizer = {
           this.error(e, `Could not preserve timestamp for ${destinationPath}`);
         }
 
-        // Clone the Zotero attachment metadata, but point the clone to the external file.
-        // Using a new attachment item lets Zotero erase/sync-delete the old stored item cleanly.
-        linkedItem = item.clone(null, { includeCollections: true });
+        // Clone attachment metadata and point the clone at the verified external
+        // file. Attachment collection membership is not needed here; collection
+        // layout is represented by the destination path and parent item.
+        linkedItem = item.clone(null);
         linkedItem.attachmentLinkMode = Zotero.Attachments.LINK_MODE_LINKED_FILE;
         linkedItem.attachmentPath = this._prepareLinkedPath(destinationPath, baseDir);
         linkedItem.dateAdded = item.dateAdded;
 
+        // Phase 1: commit all reversible Zotero database changes. Do NOT erase
+        // the old stored attachment inside this transaction, because Zotero's
+        // erase path removes the storage directory from the filesystem and a DB
+        // rollback cannot restore that file.
         await Zotero.DB.executeTransaction(async () => {
           await linkedItem.save();
 
-          // PDF annotations and embedded child items belong to the attachment item.
           await Zotero.Items.moveChildItems(item, linkedItem);
           await Zotero.Relations.copyObjectSubjectRelations(item, linkedItem);
 
@@ -426,14 +461,12 @@ var ZoteroOneDriveOrganizer = {
             await Zotero.Fulltext.transferItemIndex(item, linkedItem);
           }
           catch (e) {
-            // Full-text can be regenerated by Zotero, so indexing failure is not a
-            // reason to risk losing the original stored attachment. Log and continue.
+            // Full-text is regenerable, so indexing failure is non-fatal.
             this.error(e, `Could not transfer full-text index from ${originalID}`);
           }
 
-          // Notes can contain zotero:// links that encode the attachment key. A
-          // failed key migration is data-integrity relevant, so let the exception
-          // abort the transaction instead of deleting the old attachment anyway.
+          // Note links encode the attachment key. A failure here is integrity-
+          // relevant, so it aborts the conversion transaction.
           const parentItem = item.parentItem;
           if (parentItem) {
             const notes = Zotero.Items.get(parentItem.getNotes());
@@ -442,17 +475,13 @@ var ZoteroOneDriveOrganizer = {
               await note.save();
             }
           }
-
-          // Erasing the old stored attachment is deliberately last. Zotero handles
-          // its storage directory and remote storage state as a real item deletion.
-          await item.erase();
         });
+        conversionCommitted = true;
       }
       catch (e) {
-        // Copy verification or the database transaction failed. Remove only the
-        // destination allocated by this invocation; the original stored attachment
-        // remains authoritative because item.erase() is transaction-protected.
-        if (destinationPath) {
+        // Before the conversion transaction commits, the old stored attachment
+        // remains authoritative. Remove only the external copy created here.
+        if (!conversionCommitted && destinationPath) {
           try {
             await IOUtils.remove(destinationPath, { ignoreAbsent: true });
           }
@@ -463,7 +492,38 @@ var ZoteroOneDriveOrganizer = {
         throw e;
       }
 
+      // Phase 2: delete the old stored attachment only after the linked-item
+      // conversion has committed. If cleanup fails, never remove the verified
+      // external PDF or the linked attachment: a duplicate/missing old storage
+      // file is safer than losing the only good copy.
+      let cleanupWarning = null;
+      try {
+        const erased = await item.eraseTx();
+        if (erased === false) {
+          throw new Error(`Zotero declined to erase old stored attachment ${originalID}`);
+        }
+      }
+      catch (e) {
+        cleanupWarning = String(e);
+        this.error(e, `Linked conversion committed, but old stored attachment ${originalID} could not be fully erased`);
+      }
+
       this._clearCollectionRetry(originalID);
+      if (cleanupWarning) {
+        this.log(`Organized item ${originalID} -> ${linkedItem.id} with cleanup warning: ${destinationPath}`);
+        if (autoTriggered) {
+          this._notifyCleanupFailure(originalID, destinationPath, cleanupWarning);
+        }
+        return {
+          status: "processed-with-warning",
+          oldItemID: originalID,
+          itemID: linkedItem.id,
+          destinationPath,
+          warning: "old-item-cleanup-failed",
+          warningMessage: cleanupWarning
+        };
+      }
+
       this.log(`Organized item ${originalID} -> ${linkedItem.id}: ${destinationPath}`);
       return {
         status: "processed",
@@ -829,41 +889,85 @@ var ZoteroOneDriveOrganizer = {
     return count;
   },
 
+  requestBulkCancel() {
+    if (!this._bulkRunning) return false;
+    this._bulkCancelRequested = true;
+    this.log("Bulk migration cancellation requested; current item will finish before stopping.");
+    return true;
+  },
+
+  isBulkRunning() {
+    return Boolean(this._bulkRunning);
+  },
+
   async organizeExisting({ progress = null } = {}) {
+    if (this._bulkRunning) {
+      throw new Error("A bulk migration is already running.");
+    }
+
     await this.validateBaseDirectory();
-    const items = await Zotero.Items.getAll(Zotero.Libraries.userLibraryID, false, false, false);
-    const candidates = [];
+    this._bulkRunning = true;
+    this._bulkCancelRequested = false;
 
-    for (const item of items) {
-      const result = await this._checkEligibility(item);
-      if (result.ok) candidates.push(item);
-    }
+    try {
+      const items = await Zotero.Items.getAll(Zotero.Libraries.userLibraryID, false, false, false);
+      const candidates = [];
 
-    const stats = { total: candidates.length, processed: 0, skipped: 0, failed: 0, failures: [] };
-    for (let index = 0; index < candidates.length; index++) {
-      const item = candidates[index];
-      try {
-        const result = await this.processAttachment(item, { quietSkip: true });
-        if (result.status === "processed") stats.processed++;
-        else stats.skipped++;
-      }
-      catch (e) {
-        stats.failed++;
-        stats.failures.push({ itemID: item.id, message: String(e) });
-        this.error(e, `Bulk organize item ${item.id}`);
+      for (const item of items) {
+        if (this._bulkCancelRequested) break;
+        const result = await this._checkEligibility(item);
+        if (result.ok) candidates.push(item);
       }
 
-      if (progress) {
-        try {
-          progress({ current: index + 1, total: candidates.length, stats });
+      const stats = {
+        total: candidates.length,
+        processed: 0,
+        warnings: 0,
+        skipped: 0,
+        failed: 0,
+        cancelled: false,
+        failures: []
+      };
+
+      for (let index = 0; index < candidates.length; index++) {
+        if (this._bulkCancelRequested) {
+          stats.cancelled = true;
+          break;
         }
-        catch (e) {}
+
+        const item = candidates[index];
+        try {
+          const result = await this.processAttachment(item, { quietSkip: true });
+          if (result.status === "processed") stats.processed++;
+          else if (result.status === "processed-with-warning") {
+            stats.processed++;
+            stats.warnings++;
+          }
+          else stats.skipped++;
+        }
+        catch (e) {
+          stats.failed++;
+          stats.failures.push({ itemID: item.id, message: String(e) });
+          this.error(e, `Bulk organize item ${item.id}`);
+        }
+
+        if (progress) {
+          try {
+            progress({ current: index + 1, total: candidates.length, stats });
+          }
+          catch (e) {}
+        }
+
+        // Sequential I/O is intentional: safer for sync clients and large libraries.
+        await Zotero.Promise.delay(20);
       }
 
-      // Sequential I/O is intentional: safer for OneDrive sync clients and large libraries.
-      await Zotero.Promise.delay(20);
+      if (this._bulkCancelRequested) stats.cancelled = true;
+      return stats;
     }
-
-    return stats;
+    finally {
+      this._bulkRunning = false;
+      this._bulkCancelRequested = false;
+    }
   }
 };

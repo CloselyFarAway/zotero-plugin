@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.8 - 2026-09-10
+
+- Keep the stable v0.1.6 collection-assignment retry and all v0.1.7 no-overwrite/SHA-256/path/capability hardening.
+- Split conversion into two phases: first commit the linked attachment and metadata migration, then erase the old stored attachment in a separate `eraseTx()` transaction.
+- Never delete the verified external PDF after the linked conversion has committed merely because old-item cleanup fails; return/report a cleanup warning instead, including an automatic-mode alert for this rare condition.
+- Reserve the attachment busy ID before the first `await` to make the concurrency boundary explicit and avoid duplicate async item loads.
+- Prevent the regular scheduler from creating a second timer while a collection-assignment retry is already pending.
+- Add cooperative bulk cancellation: the current PDF finishes safely, then the loop stops before the next PDF.
+- Add regression tests for post-commit erase failure, early busy reservation, retry-scheduler de-duplication, and bulk-cancel state.
+- Ignore Python cache artifacts (`__pycache__/`, `*.py[cod]`) and remove them from the release source tree.
+- Keep relative linked-file paths opt-in, keep `strict_max_version` at `10.0.*`, and do not reintroduce the withdrawn v0.1.5 rename/delete-sync experiments.
+
 ## 0.1.7 - 2026-09-10
 
 - Harden the stable v0.1.6 file-move pipeline without reintroducing the withdrawn v0.1.5 metadata/rename/delete-sync experiments.

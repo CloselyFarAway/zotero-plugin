@@ -4,7 +4,7 @@
     <hbox align="center">
       <label><html:h2>Zotero OneDrive Organizer</html:h2></label>
       <spacer flex="1" />
-      <label id="zoo-version" value="v0.1.7" />
+      <label id="zoo-version" value="v0.1.8" />
     </hbox>
     <description>
       Move stored PDFs from My Library into a OneDrive/external folder and keep them in Zotero as linked files.
@@ -76,8 +76,10 @@
       <button id="zoo-preview-selected" label="Preview selected path(s)…" />
       <button id="zoo-organize-selected" label="Organize selected item(s)" />
       <button id="zoo-organize-existing" label="Organize ALL existing PDFs…" />
+      <button id="zoo-cancel-existing" label="Cancel bulk" disabled="true" />
     </hbox>
     <label id="zoo-status" value="" style="margin-top: 0.5em;" />
+    <description>Bulk cancellation is cooperative: the current PDF finishes safely, then the migration stops.</description>
 
     <separator class="thin" />
     <hbox align="center">
