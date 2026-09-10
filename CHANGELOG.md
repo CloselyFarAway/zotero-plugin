@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.7 - 2026-09-10
+
+- Harden the stable v0.1.6 file-move pipeline without reintroducing the withdrawn v0.1.5 metadata/rename/delete-sync experiments.
+- Copy with `IOUtils.copy(..., { noOverwrite: true })` and retry numbered suffixes on collisions, closing the exists-then-copy overwrite race.
+- Verify both byte size and SHA-256 of source/destination before converting the Zotero attachment or erasing the stored original.
+- Add a conservative whole-path length guard (240 characters on Windows) that truncates only the generated filename and never silently changes the collection hierarchy.
+- Treat Zotero note attachment-key migration failure as transaction-fatal so the original stored attachment remains intact.
+- Add startup capability detection for required Zotero/Firefox APIs; incompatible runtimes do not register automatic organization and destructive operations are blocked.
+- Keep `strict_max_version` at Zotero's recommended `10.0.*`, keep relative linked-file paths opt-in, and retain the v0.1.6 collection-assignment retry behavior.
+- Add Node regression tests for no-overwrite collision handling, path-length fitting, SHA-256 verification, capability detection, and note-link failure rollback.
+
 ## 0.1.6 - 2026-09-08
 
 - Rebase the release on the stable v0.1.4 feature set.

@@ -28,6 +28,8 @@ jobs:
           node --check bootstrap.js
           node --check organizer.js
           node --check content/preferences.js
+      - name: Regression tests
+        run: node tests/organizer.test.js
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:

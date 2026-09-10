@@ -1,16 +1,16 @@
 # Zotero 10 Manual Test Checklist
 
-Target release: **v0.1.6**  
+Target release: **v0.1.7**  
 Primary confirmed environment: **Zotero 10.0.4 / Windows**
 
 Use a disposable Zotero item and an empty OneDrive test directory first.
 
 ## Installation and settings
 
-- [ ] Zotero accepts `zotero-onedrive-organizer-0.1.6.xpi`.
+- [ ] Zotero accepts `zotero-onedrive-organizer-0.1.7.xpi`.
 - [ ] The plugin appears enabled under Tools → Plugins.
 - [ ] Settings → OneDrive Organizer opens without an error.
-- [ ] The settings pane shows `v0.1.6`.
+- [ ] The settings pane shows `v0.1.7`.
 - [ ] Project page opens the GitHub repository.
 - [ ] Report a bug / request a feature opens GitHub Issues.
 
@@ -42,6 +42,7 @@ Create a temporary collection such as `Plugin Test/Subcollection`, then add one 
 - [ ] Zotero shows the resulting attachment as a linked file.
 - [ ] The linked PDF opens normally in Zotero.
 - [ ] The external PDF byte size matches the original test PDF.
+- [ ] The external PDF SHA-256 matches the original test PDF.
 - [ ] Existing PDF annotations still open and remain attached to the PDF.
 - [ ] Notes containing Zotero attachment links still resolve.
 
@@ -69,6 +70,8 @@ After the manual test succeeds:
 - [ ] A linked PDF is skipped rather than duplicated.
 - [ ] Group Library attachments are skipped.
 - [ ] A duplicate destination filename gets a numbered suffix instead of overwriting a file.
+- [ ] A deliberately long title/collection path is truncated or rejected before Windows path limits are exceeded.
+- [ ] Simulated/forced note-link migration failure leaves the original stored attachment intact.
 - [ ] Uninstalling the plugin leaves already-linked files usable in Zotero.
 
 ## Build validation
@@ -76,6 +79,7 @@ After the manual test succeeds:
 ```bash
 python scripts/build.py
 python scripts/generate_updates.py
+node tests/organizer.test.js
 python scripts/check.py
 ```
 

@@ -3,9 +3,9 @@
     "zotero-onedrive-organizer@closelyfaraway.github.io": {
       "updates": [
         {
-          "version": "0.1.6",
-          "update_link": "https://github.com/CloselyFarAway/zotero-plugin/releases/download/v0.1.6/zotero-onedrive-organizer-0.1.6.xpi",
-          "update_hash": "sha256:12ff5494b4facbaa42bddd6402d5519b4fdbb0abbcdf4b1640bd790cb189bd61",
+          "version": "0.1.7",
+          "update_link": "https://github.com/CloselyFarAway/zotero-plugin/releases/download/v0.1.7/zotero-onedrive-organizer-0.1.7.xpi",
+          "update_hash": "sha256:c905dd666e0e2ed6bb6dd1738bd8f342b673ea443139c640a1d887f15f6455c0",
           "applications": {
             "zotero": {
               "strict_min_version": "10.0",

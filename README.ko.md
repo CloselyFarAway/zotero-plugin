@@ -4,7 +4,9 @@
 
 Zotero 10의 **My Library에 저장된 PDF**를 OneDrive 또는 다른 로컬/동기화 폴더로 옮기고, Zotero 안에서는 해당 PDF를 **linked-file attachment**로 계속 사용할 수 있게 해주는 플러그인입니다. Zotero의 Collection/Subcollection 구조도 실제 폴더 구조에 반영할 수 있습니다.
 
-> 현재 버전: **v0.1.6**. **v0.1.5에서 실험적으로 추가했던 metadata 대기/rename/삭제 동기화 기능은 회귀 문제가 있어 v0.1.6에서 전부 제거했습니다.** v0.1.6은 실제로 안정적이었던 v0.1.4 기능을 기준으로, 자동 import 시 collection 배정이 늦어 PDF가 `_Unfiled`로 들어가던 타이밍 문제만 수정한 버전입니다. 처음 대량 이동하기 전에는 Zotero 데이터와 중요한 PDF를 백업하는 것을 권장합니다.
+> 현재 버전: **v0.1.7**. **v0.1.5에서 실험적으로 추가했던 metadata 대기/rename/삭제 동기화 기능은 회귀 문제가 있어 v0.1.6에서 전부 제거했습니다.** v0.1.6은 실제로 안정적이었던 v0.1.4 기능을 기준으로, 자동 import 시 collection 배정이 늦어 PDF가 `_Unfiled`로 들어가던 타이밍 문제만 수정한 버전입니다. 처음 대량 이동하기 전에는 Zotero 데이터와 중요한 PDF를 백업하는 것을 권장합니다.
+
+v0.1.7은 v0.1.6의 collection 배정 재시도 로직을 유지하면서, 실제 파일 이동 경로만 강화한 hardening release입니다. `noOverwrite` 복사, SHA-256 검증, Windows 전체 경로 길이 보호, note-link 이전 실패 시 rollback, 필수 API capability check를 추가했습니다. v0.1.5의 metadata/rename/delete-sync 실험 기능은 다시 넣지 않았습니다.
 
 ## 다운로드 및 설치
 
@@ -64,22 +66,25 @@ D:\OneDrive\Zotero_PDF\
 - 연도 폴더 선택 가능
 - 파일명 템플릿 지정
 - Windows에서 사용할 수 없는 파일명 문자 자동 정리
-- 같은 파일명이 있을 때 `(2)`, `(3)`처럼 자동 회피
+- 같은 파일명이 있을 때 `(2)`, `(3)`처럼 자동 회피하며 기존 파일을 덮어쓰지 않음
 - 여러 PC에서 사용할 수 있는 Zotero relative linked-file path 옵션
 - 대상 폴더의 실제 쓰기 권한 검사
+- stored 원본 삭제 전 source/destination SHA-256 일치 확인
+- Windows에서 전체 destination path가 너무 길면 생성 파일명만 줄이고 collection 폴더 구조는 임의로 바꾸지 않음
+- 필수 Zotero/Firefox API가 없으면 자동 정리를 등록하지 않고 파일 이동을 차단하는 capability check
 
 ## 안전하게 처리하는 방식
 
 ```text
 Zotero stored PDF
       ↓
-외부 폴더로 먼저 복사
+외부 폴더로 no-overwrite 방식으로 먼저 복사
       ↓
-파일 크기 검증
+파일 크기 + SHA-256 검증
       ↓
 linked attachment 생성
       ↓
-annotation / relation / full-text 정보 이전
+annotation / relation / full-text / note link 정보 이전
       ↓
 마지막 단계에서 기존 stored attachment 삭제
 ```

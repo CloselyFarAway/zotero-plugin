@@ -22,6 +22,8 @@ jobs:
           node --check bootstrap.js
           node --check organizer.js
           node --check content/preferences.js
+      - name: Regression tests
+        run: node tests/organizer.test.js
       - uses: actions/upload-artifact@v4
         with:
           name: zotero-onedrive-organizer-xpi

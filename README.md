@@ -9,7 +9,7 @@
 
 A Zotero 10 plugin that moves **stored PDF attachments** from **My Library** to OneDrive (or any normal local/synced folder), mirrors your Zotero collection hierarchy, and keeps the PDFs in Zotero as **linked-file attachments**.
 
-> Current version: **v0.1.6**. **v0.1.5 was withdrawn due to regressions in experimental metadata/rename/delete-sync features; those features are not present in v0.1.6.** This release returns to the proven v0.1.4 feature set and fixes one automatic-import race: Zotero can assign an item to its collection shortly after the PDF attachment is created, which previously could send the PDF to `_Unfiled`. v0.1.6 waits briefly for that collection assignment before falling back to `_Unfiled`. Back up important Zotero data before a large first-time migration.
+> Current version: **v0.1.7**. **v0.1.5 remains withdrawn**; its experimental metadata/rename/delete-sync features are not present. v0.1.7 keeps the stable v0.1.6 collection-assignment retry and hardens the destructive file-move path with no-overwrite copying, SHA-256 verification, whole-path length checks, fatal note-link rollback, and runtime capability checks. Back up important Zotero data before a large first-time migration.
 
 ## Download
 
@@ -28,7 +28,7 @@ This plugin automates the tedious part: moving PDFs out of Zotero-managed storag
 1. Install the `.xpi` and restart Zotero if requested.
 2. Open **Settings → OneDrive Organizer**.
 3. Click **Browse…** and choose a dedicated folder such as `D:\OneDrive\Zotero_PDF`.
-4. Click **Check folder**. v0.1.6 verifies both access **and write permission**.
+4. Click **Check folder**. v0.1.7 verifies both access **and write permission**.
 5. Keep automatic organization **off** for the first test.
 6. Select one test paper in Zotero and click **Preview selected path(s)…**. Nothing is moved during preview.
 7. If the destination looks correct, click **Organize selected item(s)**.
@@ -75,9 +75,12 @@ D:\OneDrive\Zotero_PDF\
 - Zotero collection/subcollection hierarchy mirroring
 - Optional publication-year folder
 - Custom filename template
-- Windows-safe filenames and collision handling (` (2)`, ` (3)`, …)
+- Windows-safe filenames and collision handling (` (2)`, ` (3)`, …) with no-overwrite copy semantics
 - Optional Zotero relative linked-file paths for multi-computer setups
 - Folder check that verifies the destination is writable
+- SHA-256 source/destination verification before the stored Zotero attachment can be erased
+- Conservative whole-path length guard on Windows
+- Runtime capability check that blocks file-moving operations if required Zotero/Firefox APIs are unavailable
 - Group Library protection: unsupported linked-file attachments are skipped
 
 ## Filename template
@@ -100,7 +103,7 @@ The `.pdf` extension is added automatically.
 
 ## Automatic collection timing
 
-During a Zotero Connector import, the PDF attachment can appear a moment before Zotero finishes assigning the parent item to the currently selected collection. v0.1.6 handles this conservatively:
+During a Zotero Connector import, the PDF attachment can appear a moment before Zotero finishes assigning the parent item to the currently selected collection. v0.1.7 retains the v0.1.6 conservative behavior:
 
 1. Automatic organization checks the parent item's collection membership.
 2. If no collection is visible yet, the PDF remains in Zotero storage temporarily.
@@ -125,20 +128,20 @@ For each eligible PDF:
 ```text
 stored Zotero PDF
       ↓
-copy to external folder
+copy to a unique external path with no-overwrite protection
       ↓
-verify copied byte size
+verify copied byte size + SHA-256
       ↓
 create linked attachment
       ↓
-transfer annotations / relations / full-text index
+transfer annotations / relations / full-text index / note attachment keys
       ↓
 erase old stored attachment as the final database operation
 ```
 
-If copying or Zotero database conversion fails, the original stored attachment is retained and the newly copied external file is removed when possible.
+If copying, SHA-256 verification, note-link migration, or Zotero database conversion fails, the original stored attachment is retained and the newly copied external file is removed when possible.
 
-Automatic organization is **off by default**. v0.1.6 keeps the v0.1.4 fail-safe/off behavior if the preference cannot be read.
+Automatic organization is **off by default**. v0.1.7 also performs a startup capability check; if required file/database APIs are missing, automatic organization is not registered for that runtime session and file-moving operations are blocked.
 
 ## Important limitations
 
@@ -176,7 +179,7 @@ This project is not affiliated with Zotero, the Corporation for Digital Scholars
 ## Troubleshooting
 
 **Browse works but organization fails**  
-Run **Check folder** first. v0.1.6 creates and deletes a tiny temporary file to verify actual write access.
+Run **Check folder** first. v0.1.7 creates and deletes a tiny temporary file to verify actual write access.
 
 **Nothing happens to a selected attachment**  
 The plugin only processes stored PDF attachments in My Library. Already-linked files, non-PDFs, and Group Library attachments are skipped.
@@ -193,14 +196,16 @@ No Node/npm build is required.
 
 ```bash
 python scripts/build.py
+python scripts/generate_updates.py
+node tests/organizer.test.js
 python scripts/check.py
 ```
 
 Output:
 
 ```text
-dist/zotero-onedrive-organizer-0.1.6.xpi
-dist/zotero-onedrive-organizer-0.1.6.xpi.sha256
+dist/zotero-onedrive-organizer-0.1.7.xpi
+dist/zotero-onedrive-organizer-0.1.7.xpi.sha256
 ```
 
 The public extension ID is permanent:
@@ -222,6 +227,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [TESTING.md](TESTING.md) for developm
 - [x] Selected-item migration
 - [x] Destination preview
 - [x] Writable-folder validation
+- [x] No-overwrite collision protection
+- [x] SHA-256 copy verification
+- [x] Windows whole-path length guard
+- [x] Regression-test harness
 - [ ] Relocate existing linked files when collection paths change
 - [ ] Restore linked PDFs back into Zotero-managed storage
 - [ ] Support additional attachment types

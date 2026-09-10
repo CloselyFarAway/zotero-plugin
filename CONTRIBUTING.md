@@ -38,6 +38,7 @@ Run:
 
 ```bash
 python scripts/build.py
+node tests/organizer.test.js
 python scripts/check.py
 ```
 
@@ -51,4 +52,4 @@ The permanent plugin ID is:
 zotero-onedrive-organizer@closelyfaraway.github.io
 ```
 
-Do not change it. Release tags should match `manifest.json`, e.g. manifest `0.1.6` → tag `v0.1.6`.
+Do not change it. Release tags should match `manifest.json`, e.g. manifest `0.1.7` → tag `v0.1.7`.

@@ -32,6 +32,7 @@ required_source = [
     "bootstrap.js", "prefs.js", "organizer.js",
     "content/preferences.xhtml", "content/preferences.js",
     "README.md", "README.ko.md", "CHANGELOG.md", "TESTING.md", "LICENSE",
+    "tests/organizer.test.js",
 ]
 for rel in required_source:
     if not (ROOT / rel).exists():

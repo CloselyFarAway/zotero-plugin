@@ -1,12 +1,13 @@
 /*
  * Zotero OneDrive Organizer
- * v0.1.6
+ * v0.1.7
  *
  * Safety model:
- *   1. Copy the stored PDF to the external folder.
- *   2. Verify the copied file size.
+ *   1. Copy with no-overwrite semantics to a unique external path.
+ *   2. Verify byte size and SHA-256 before any Zotero attachment is erased.
  *   3. Create a linked attachment clone and transfer annotations/relations/full-text.
- *   4. Erase the old stored attachment only as the final DB operation.
+ *   4. Treat note-link migration failure as fatal and roll back the DB transaction.
+ *   5. Erase the old stored attachment only as the final DB operation.
  *
  * If conversion fails, the external copy is removed and the original stored item remains.
  */
@@ -19,12 +20,30 @@ var ZoteroOneDriveOrganizer = {
   _collectionRetries: new Map(),
   _collectionRetryCounts: new Map(),
   _shuttingDown: false,
+  _capabilitiesOK: false,
+  _capabilityFailures: [],
 
   async init({ id, version, rootURI }) {
     this.id = id;
     this.version = version;
     this.rootURI = rootURI;
     this._shuttingDown = false;
+
+    const capabilityResult = this._checkCapabilities();
+    this._capabilitiesOK = capabilityResult.ok;
+    this._capabilityFailures = capabilityResult.missing;
+
+    if (!this._capabilitiesOK) {
+      const message =
+        "Required Zotero/Firefox APIs are unavailable: " +
+        this._capabilityFailures.join(", ") +
+        ". Automatic organization has been disabled for this runtime session.";
+      this.error(new Error(message), "Compatibility check failed");
+      if (this.getPref("autoEnabled", false)) {
+        this._notifyCompatibilityFailure(message);
+      }
+      return;
+    }
 
     this._observerID = Zotero.Notifier.registerObserver(
       {
@@ -34,7 +53,7 @@ var ZoteroOneDriveOrganizer = {
       "zotero-onedrive-organizer"
     );
 
-    this.log("Notifier registered");
+    this.log("Compatibility check passed; notifier registered");
   },
 
   shutdown() {
@@ -57,6 +76,72 @@ var ZoteroOneDriveOrganizer = {
     const message = context ? `${context}: ${error}` : String(error);
     Zotero.debug("Zotero OneDrive Organizer ERROR: " + message, 1);
     Zotero.logError(error instanceof Error ? error : new Error(message));
+  },
+
+  _checkCapabilities() {
+    const checks = [
+      ["IOUtils.copy", () => typeof IOUtils !== "undefined" && typeof IOUtils.copy === "function"],
+      ["IOUtils.computeHexDigest", () => typeof IOUtils !== "undefined" && typeof IOUtils.computeHexDigest === "function"],
+      ["IOUtils.stat", () => typeof IOUtils !== "undefined" && typeof IOUtils.stat === "function"],
+      ["IOUtils.remove", () => typeof IOUtils !== "undefined" && typeof IOUtils.remove === "function"],
+      ["IOUtils.exists", () => typeof IOUtils !== "undefined" && typeof IOUtils.exists === "function"],
+      ["IOUtils.makeDirectory", () => typeof IOUtils !== "undefined" && typeof IOUtils.makeDirectory === "function"],
+      ["PathUtils.join", () => typeof PathUtils !== "undefined" && typeof PathUtils.join === "function"],
+      ["PathUtils.normalize", () => typeof PathUtils !== "undefined" && typeof PathUtils.normalize === "function"],
+      ["PathUtils.filename", () => typeof PathUtils !== "undefined" && typeof PathUtils.filename === "function"],
+      ["Zotero.DB.executeTransaction", () => typeof Zotero.DB?.executeTransaction === "function"],
+      ["Zotero.Items.getAsync", () => typeof Zotero.Items?.getAsync === "function"],
+      ["Zotero.Items.get", () => typeof Zotero.Items?.get === "function"],
+      ["Zotero.Items.moveChildItems", () => typeof Zotero.Items?.moveChildItems === "function"],
+      ["Zotero.Relations.copyObjectSubjectRelations", () => typeof Zotero.Relations?.copyObjectSubjectRelations === "function"],
+      ["Zotero.Fulltext.transferItemIndex", () => typeof Zotero.Fulltext?.transferItemIndex === "function"],
+      ["Zotero.Notes.replaceItemKey", () => typeof Zotero.Notes?.replaceItemKey === "function"],
+      ["Zotero.Collections.getAsync", () => typeof Zotero.Collections?.getAsync === "function"],
+      ["Zotero.Libraries.get", () => typeof Zotero.Libraries?.get === "function"],
+      ["Zotero.File.getValidFileName", () => typeof Zotero.File?.getValidFileName === "function"],
+      ["Zotero.Attachments.LINK_MODE_LINKED_FILE", () => typeof Zotero.Attachments?.LINK_MODE_LINKED_FILE === "number"],
+    ];
+
+    const missing = [];
+    for (const [name, test] of checks) {
+      try {
+        if (!test()) missing.push(name);
+      }
+      catch (_) {
+        missing.push(name);
+      }
+    }
+    return { ok: missing.length === 0, missing };
+  },
+
+  _assertCapabilities() {
+    if (this._capabilitiesOK) return;
+    const detail = this._capabilityFailures.length
+      ? this._capabilityFailures.join(", ")
+      : "unknown compatibility failure";
+    throw new Error(`Compatibility check failed; file-moving operations are blocked (${detail}).`);
+  },
+
+  getRuntimeStatus() {
+    return {
+      ok: Boolean(this._capabilitiesOK),
+      missing: [...this._capabilityFailures]
+    };
+  },
+
+  _notifyCompatibilityFailure(message) {
+    Zotero.Promise.delay(0).then(() => {
+      try {
+        Services.prompt.alert(
+          Zotero.getMainWindow?.() || null,
+          "Zotero OneDrive Organizer",
+          message
+        );
+      }
+      catch (e) {
+        this.error(e, "Could not show compatibility warning");
+      }
+    });
   },
 
   getPref(name, fallback = null) {
@@ -243,6 +328,7 @@ var ZoteroOneDriveOrganizer = {
     const originalID = item.id;
     if (this._busy.has(originalID)) return { status: "skipped", reason: "busy" };
 
+    this._assertCapabilities();
     this._busy.add(originalID);
     try {
       const eligibility = await this._checkEligibility(item);
@@ -298,35 +384,30 @@ var ZoteroOneDriveOrganizer = {
       });
 
       const destinationName = await this._buildFilename(item, parent, sourcePath);
-      const destinationPath = await this._uniquePath(destinationDir, destinationName);
-
-      this.log(`Copying ${sourcePath} -> ${destinationPath}`);
-      await IOUtils.copy(sourcePath, destinationPath);
-
-      const [srcStat, dstStat] = await Promise.all([
-        IOUtils.stat(sourcePath),
-        IOUtils.stat(destinationPath)
-      ]);
-      if (srcStat.size !== dstStat.size) {
-        await IOUtils.remove(destinationPath, { ignoreAbsent: true });
-        throw new Error(
-          `Copy verification failed for ${destinationName} ` +
-          `(source ${srcStat.size} bytes, destination ${dstStat.size} bytes)`
-        );
-      }
-
-      // Preserve the original file timestamp when possible.
-      try {
-        if (srcStat.lastModified) {
-          await IOUtils.setModificationTime(destinationPath, srcStat.lastModified);
-        }
-      }
-      catch (e) {
-        this.error(e, `Could not preserve timestamp for ${destinationPath}`);
-      }
-
+      let destinationPath = null;
       let linkedItem = null;
+
       try {
+        destinationPath = await this._copyToUniqueDestination(
+          sourcePath,
+          destinationDir,
+          destinationName
+        );
+        this.log(`Copied ${sourcePath} -> ${destinationPath} with no-overwrite protection`);
+
+        const verification = await this._verifyCopiedFile(sourcePath, destinationPath);
+        const srcStat = verification.sourceStat;
+
+        // Preserve the original file timestamp when possible.
+        try {
+          if (srcStat.lastModified) {
+            await IOUtils.setModificationTime(destinationPath, srcStat.lastModified);
+          }
+        }
+        catch (e) {
+          this.error(e, `Could not preserve timestamp for ${destinationPath}`);
+        }
+
         // Clone the Zotero attachment metadata, but point the clone to the external file.
         // Using a new attachment item lets Zotero erase/sync-delete the old stored item cleanly.
         linkedItem = item.clone(null, { includeCollections: true });
@@ -345,21 +426,20 @@ var ZoteroOneDriveOrganizer = {
             await Zotero.Fulltext.transferItemIndex(item, linkedItem);
           }
           catch (e) {
+            // Full-text can be regenerated by Zotero, so indexing failure is not a
+            // reason to risk losing the original stored attachment. Log and continue.
             this.error(e, `Could not transfer full-text index from ${originalID}`);
           }
 
-          // Notes can contain zotero:// links that encode the attachment key.
+          // Notes can contain zotero:// links that encode the attachment key. A
+          // failed key migration is data-integrity relevant, so let the exception
+          // abort the transaction instead of deleting the old attachment anyway.
           const parentItem = item.parentItem;
           if (parentItem) {
-            try {
-              const notes = Zotero.Items.get(parentItem.getNotes());
-              for (const note of notes) {
-                Zotero.Notes.replaceItemKey(note, item.key, linkedItem.key);
-                await note.save();
-              }
-            }
-            catch (e) {
-              this.error(e, `Could not update note links for attachment ${originalID}`);
+            const notes = Zotero.Items.get(parentItem.getNotes());
+            for (const note of notes) {
+              Zotero.Notes.replaceItemKey(note, item.key, linkedItem.key);
+              await note.save();
             }
           }
 
@@ -369,13 +449,16 @@ var ZoteroOneDriveOrganizer = {
         });
       }
       catch (e) {
-        // The database transaction failed or did not complete. Remove the external
-        // copy so the original stored attachment remains the only authoritative file.
-        try {
-          await IOUtils.remove(destinationPath, { ignoreAbsent: true });
-        }
-        catch (cleanupError) {
-          this.error(cleanupError, "Failed removing copied file after conversion failure");
+        // Copy verification or the database transaction failed. Remove only the
+        // destination allocated by this invocation; the original stored attachment
+        // remains authoritative because item.erase() is transaction-protected.
+        if (destinationPath) {
+          try {
+            await IOUtils.remove(destinationPath, { ignoreAbsent: true });
+          }
+          catch (cleanupError) {
+            this.error(cleanupError, "Failed removing copied file after conversion failure");
+          }
         }
         throw e;
       }
@@ -599,19 +682,108 @@ var ZoteroOneDriveOrganizer = {
     return match ? match[1].toLowerCase() : "";
   },
 
-  async _uniquePath(directory, filename) {
+  _safePathLengthLimit() {
+    // Keep a conservative margin below legacy Windows MAX_PATH because OneDrive,
+    // shell integrations, and third-party tools can still encounter shorter-path
+    // limits even when the underlying filesystem supports long paths.
+    return Zotero.isWin ? 240 : 1024;
+  },
+
+  _candidatePath(directory, filename, index = 1) {
     const dot = filename.lastIndexOf(".");
     const stem = dot > 0 ? filename.slice(0, dot) : filename;
     const extension = dot > 0 ? filename.slice(dot) : "";
+    const suffix = index > 1 ? ` (${index})` : "";
+    const normalizedDir = PathUtils.normalize(directory).replace(/[\\/]+$/, "");
+    const limit = this._safePathLengthLimit();
 
-    let candidate = PathUtils.join(directory, filename);
-    if (!(await IOUtils.exists(candidate))) return candidate;
+    // Reserve one separator plus the collision suffix and extension before
+    // truncating the title-derived stem. Never silently truncate directories,
+    // because that would change the user's collection hierarchy.
+    const maxStemLength = limit - normalizedDir.length - 1 - suffix.length - extension.length;
+    if (maxStemLength < 8) {
+      throw new Error(
+        `Destination folder is too long to create a safe filename (${normalizedDir.length} characters; limit ${limit}). ` +
+        `Choose a shorter external root or shorten the Zotero collection path.`
+      );
+    }
 
-    for (let index = 2; index < 10000; index++) {
-      candidate = PathUtils.join(directory, `${stem} (${index})${extension}`);
+    const fittedStem = this._truncate(stem, Math.min(stem.length, maxStemLength)) || "_";
+    const candidate = PathUtils.join(directory, `${fittedStem}${suffix}${extension}`);
+    if (candidate.length > limit) {
+      throw new Error(`Destination path exceeds the safe ${limit}-character limit: ${candidate}`);
+    }
+    return candidate;
+  },
+
+  async _uniquePath(directory, filename) {
+    // Preview helper only. Actual copies use _copyToUniqueDestination(), which
+    // performs the allocation and copy together with noOverwrite=true.
+    for (let index = 1; index < 10000; index++) {
+      const candidate = this._candidatePath(directory, filename, index);
       if (!(await IOUtils.exists(candidate))) return candidate;
     }
     throw new Error(`Could not allocate a unique filename for ${filename}`);
+  },
+
+  _isAlreadyExistsError(error) {
+    try {
+      if (typeof Cr !== "undefined" && error?.result === Cr.NS_ERROR_FILE_ALREADY_EXISTS) {
+        return true;
+      }
+    }
+    catch (_) {}
+    const text = `${error?.name || ""} ${error?.message || ""} ${String(error || "")}`;
+    return /NS_ERROR_FILE_ALREADY_EXISTS|already exists/i.test(text);
+  },
+
+  async _copyToUniqueDestination(sourcePath, directory, filename) {
+    for (let index = 1; index < 10000; index++) {
+      const candidate = this._candidatePath(directory, filename, index);
+      try {
+        await IOUtils.copy(sourcePath, candidate, { noOverwrite: true });
+        return candidate;
+      }
+      catch (e) {
+        // noOverwrite closes the exists-then-copy race. Retry only a genuine
+        // already-exists error; disk-full/access/other I/O failures must abort
+        // immediately rather than producing a trail of partial numbered files.
+        if (this._isAlreadyExistsError(e)) {
+          this.log(`Destination already exists; retrying with a numbered suffix: ${candidate}`);
+          continue;
+        }
+        throw new Error(`Could not copy PDF to ${candidate}: ${e}`);
+      }
+    }
+    throw new Error(`Could not allocate a unique filename for ${filename}`);
+  },
+
+  async _verifyCopiedFile(sourcePath, destinationPath) {
+    const [sourceStat, destinationStat] = await Promise.all([
+      IOUtils.stat(sourcePath),
+      IOUtils.stat(destinationPath)
+    ]);
+
+    if (sourceStat.size !== destinationStat.size) {
+      throw new Error(
+        `Copy verification failed: byte size differs ` +
+        `(source ${sourceStat.size}, destination ${destinationStat.size})`
+      );
+    }
+
+    const [sourceHash, destinationHash] = await Promise.all([
+      IOUtils.computeHexDigest(sourcePath, "sha256"),
+      IOUtils.computeHexDigest(destinationPath, "sha256")
+    ]);
+    if (!sourceHash || sourceHash !== destinationHash) {
+      throw new Error(
+        `Copy verification failed: SHA-256 differs ` +
+        `(source ${String(sourceHash).slice(0, 12)}…, destination ${String(destinationHash).slice(0, 12)}…)`
+      );
+    }
+
+    this.log(`SHA-256 verified for ${destinationPath}`);
+    return { sourceStat, destinationStat, sha256: sourceHash };
   },
 
   _prepareLinkedPath(destinationPath, baseDir) {

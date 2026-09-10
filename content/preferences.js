@@ -46,8 +46,14 @@ globalThis.ZoteroOneDriveOrganizerPrefs = {
       .addEventListener("command", () => Zotero.launchURL("https://github.com/CloselyFarAway/zotero-plugin/issues/new/choose"));
 
     const versionLabel = document.getElementById("zoo-version");
-    if (versionLabel) versionLabel.value = `v${this.organizer?.version || "0.1.6"}`;
-    this._setStatus("Ready — Browse → Check folder → Preview → Organize");
+    if (versionLabel) versionLabel.value = `v${this.organizer?.version || "0.1.7"}`;
+    const runtimeStatus = this.organizer?.getRuntimeStatus?.();
+    if (runtimeStatus && !runtimeStatus.ok) {
+      this._setStatus(`Compatibility check failed — missing: ${runtimeStatus.missing.join(", ")}`);
+    }
+    else {
+      this._setStatus("Ready — Browse → Check folder → Preview → Organize");
+    }
     Zotero.debug("Zotero OneDrive Organizer: preference pane initialized");
     return true;
   },
